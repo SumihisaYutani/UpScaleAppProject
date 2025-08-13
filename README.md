@@ -52,6 +52,24 @@ python main.py upscale input_video.mp4 --output upscaled_video.mp4
 python main.py upscale input_video.mp4 --no-ai
 ```
 
+### 🚀 拡張機能（Phase 2）
+```bash
+# 拡張CLIでシステム監視付き処理
+python main_enhanced.py upscale input_video.mp4 --show-system-stats
+
+# 品質プリセット指定
+python main_enhanced.py upscale input_video.mp4 --quality-preset quality
+
+# エラー回復機能付き処理
+python main_enhanced.py upscale input_video.mp4 --max-retries 5
+
+# 処理ログの分析
+python main_enhanced.py logs --last-n 10
+
+# 詳細システム情報とレポート保存
+python main_enhanced.py system --save-report
+```
+
 ### その他のコマンド
 ```bash
 # 動画ファイル情報を表示
@@ -151,10 +169,13 @@ python -m pytest tests/ -v
 - [x] MP4ファイル処理
 - [x] CLI インターフェース
 
-### Phase 2 🚧
-- [ ] AI統合とテスト
-- [ ] パフォーマンス最適化
-- [ ] エラーハンドリング強化
+### Phase 2 ✅  
+- [x] AI統合とテスト
+- [x] パフォーマンス最適化
+- [x] エラーハンドリング強化
+- [x] 拡張AI処理モジュール
+- [x] リアルタイム性能監視
+- [x] 包括的エラー回復機能
 
 ### Phase 3 📋
 - [ ] GUI実装
