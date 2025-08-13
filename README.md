@@ -64,7 +64,18 @@ run_test.bat
 ./run_test.sh
 ```
 
-📚 **詳細な環境設定ガイド**: [ENVIRONMENT_SETUP.md](ENVIRONMENT_SETUP.md)
+📚 **詳細な環境設定ガイド**: [ENVIRONMENT_SETUP.md](ENVIRONMENT_SETUP.md)  
+🚨 **トラブルシューティング**: [TROUBLESHOOTING.md](TROUBLESHOOTING.md)
+
+### 🏥 問題診断
+環境に問題がある場合：
+```bash
+# 具体的な問題を診断
+python diagnose_issues.py
+
+# 簡単な健康チェック  
+python test_environment.py
+```
 
 ## 💻 使用方法
 
