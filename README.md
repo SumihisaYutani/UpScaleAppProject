@@ -1,15 +1,16 @@
 # UpScaleAppProject
 
-🎬 **AI Video Upscaling Tool** - 低解像度のMP4動画をAI技術（Stable Diffusion）を使用して高解像度・高画質に変換するツール
+**AI Video Upscaling Tool** - 低解像度のMP4動画をAI技術（Stable Diffusion）を使用して高解像度・高画質に変換するツール
 
 ## 🌟 特徴
 
 - **AI駆動のアップスケール**: Stable Diffusionを使用した高品質な画質向上
 - **対応フォーマット**: MP4ファイル（H.264, H.265/HEVC, AVC対応）
-- **1.5倍アップスケール**: 標準的な1.5倍の解像度向上
+- **多段階スケーリング**: 1.2x, 1.5x, 2.0x, 2.5x のスケール対応
 - **バッチ処理**: フレーム単位での効率的な処理
-- **CLI & GUI**: コマンドライン版（将来的にGUI対応予定）
+- **GUI & CLI**: グラフィカルユーザーインターフェース＋コマンドライン版
 - **GPU加速**: CUDA対応でより高速な処理
+- **軽量版対応**: AI依存関係なしでの基本機能利用
 
 ## 🚀 インストール
 
@@ -19,11 +20,26 @@
 - 推奨: NVIDIA GPU（CUDA対応）
 
 ### 🎯 クイックスタート
+
+**GUI版を使用する場合（推奨）**:
 ```bash
 # リポジトリのクローン
 git clone https://github.com/SumihisaYutani/UpScaleAppProject.git
 cd UpScaleAppProject
 
+# GUI依存関係のインストール
+pip install -r requirements_gui.txt
+
+# 軽量GUI版を起動（AI機能なし）
+python simple_gui.py
+
+# フルGUI版を起動（AI機能あり）
+pip install -r requirements.txt  # 重い依存関係も必要
+python main_gui.py
+```
+
+**CLI版のセットアップ**:
+```bash
 # 自動環境テスト
 python quick_test.py
 
@@ -37,8 +53,11 @@ python setup_environment.py
 python -m venv venv
 source venv/bin/activate  # Windows: venv\Scripts\activate
 
-# 段階的依存関係インストール
-python install_dependencies.py
+# 基本依存関係（軽量）
+pip install -r requirements_gui.txt
+
+# AI機能も使用する場合
+pip install -r requirements.txt
 
 # 環境テスト
 python test_environment.py
@@ -79,7 +98,29 @@ python test_environment.py
 
 ## 💻 使用方法
 
-### 基本的な使用方法
+### 📱 GUI版（推奨）
+
+**軽量GUI版（AI機能なし）**:
+```bash
+python simple_gui.py
+```
+- ファイル選択とブラウズ
+- 基本的な動画情報表示
+- スケールファクター設定（1.2x〜2.5x）
+- FFmpeg テスト機能
+
+**フルGUI版（AI機能あり）**:
+```bash
+python main_gui.py
+```
+- 完全なAI アップスケール機能
+- リアルタイム進捗表示
+- GPU/CPU 使用状況監視
+- 高度な設定オプション
+
+### 💻 CLI版
+
+**基本的な使用方法**
 ```bash
 # 動画をアップスケール（AI使用）
 python main.py upscale input_video.mp4
@@ -134,20 +175,27 @@ python main.py --help
 
 ```
 UpScaleAppProject/
-├── src/                    # ソースコード
+├── src/                        # ソースコード
 │   ├── modules/           
-│   │   ├── video_processor.py  # 動画処理
-│   │   ├── video_builder.py    # 動画再構築
-│   │   └── ai_processor.py     # AI処理
-│   └── upscale_app.py          # メインアプリケーション
+│   │   ├── video_processor.py     # 動画処理
+│   │   ├── video_builder.py       # 動画再構築
+│   │   ├── ai_processor.py        # AI処理
+│   │   ├── enhanced_ai_processor.py  # 拡張AI処理
+│   │   └── performance_monitor.py   # パフォーマンス監視
+│   ├── gui/
+│   │   └── main_window.py          # GUI メインウィンドウ
+│   └── enhanced_upscale_app.py     # 拡張アプリケーション
 ├── config/
-│   └── settings.py             # 設定ファイル
-├── tests/                      # テストファイル
-├── temp/                       # 一時ファイル
-├── output/                     # 出力ファイル
-├── main.py                     # CLI エントリーポイント
-├── requirements.txt            # Python依存関係
-└── PROJECT_DESIGN.md           # 設計書
+│   └── settings.py                 # 設定ファイル
+├── tests/                          # テストファイル
+├── temp/                           # 一時ファイル
+├── output/                         # 出力ファイル
+├── main.py                         # CLI エントリーポイント
+├── main_gui.py                     # GUI エントリーポイント
+├── simple_gui.py                   # 軽量GUI版
+├── requirements.txt                # Python依存関係（フル版）
+├── requirements_gui.txt            # GUI依存関係（軽量版）
+└── PROJECT_DESIGN.md               # 設計書
 ```
 
 ## ⚙️ 設定
@@ -155,8 +203,9 @@ UpScaleAppProject/
 主要な設定は `config/settings.py` で管理されています：
 
 - **最大ファイルサイズ**: デフォルト2GB
-- **最大動画長**: デフォルト30分
-- **アップスケール倍率**: デフォルト1.5倍
+- **最大動画長**: デフォルト60分（拡張）
+- **アップスケール倍率**: 1.2x, 1.5x, 2.0x, 2.5x対応
+- **品質プリセット**: Fast, Balanced, Quality
 - **AI処理設定**: モデル選択、バッチサイズ等
 
 ## 🔧 トラブルシューティング
@@ -199,10 +248,11 @@ python -m pytest tests/ -v
 ## 📋 制限事項
 
 - **ファイルサイズ**: 最大2GB
-- **動画長**: 最大30分
+- **動画長**: 最大60分
 - **解像度**: 入力最大1920x1080
-- **フォーマット**: MP4のみ対応
+- **フォーマット**: MP4のみ対応（AVI, MKV, MOVの表示対応）
 - **OS**: Windows 10/11, macOS 10.15+, Ubuntu 20.04+
+- **GUI**: Windows環境で最適化（Unicode文字制限対応）
 
 ## 🛣️ ロードマップ
 
@@ -219,10 +269,18 @@ python -m pytest tests/ -v
 - [x] リアルタイム性能監視
 - [x] 包括的エラー回復機能
 
-### Phase 3 📋
-- [ ] GUI実装
-- [ ] バッチ処理対応
-- [ ] プラグインシステム
+### Phase 3 ✅
+- [x] GUI実装（フル版・軽量版）
+- [x] Windows互換性対応
+- [x] VideoBuilderクラス実装
+- [ ] バッチ処理対応（計画中）
+- [ ] プラグインシステム（将来版）
+
+### Phase 4 📋
+- [ ] 高度なバッチ処理
+- [ ] プラグインアーキテクチャ
+- [ ] ウェブインターフェース
+- [ ] クラウド処理対応
 
 ## 🤝 コントリビュート
 
@@ -246,5 +304,6 @@ python -m pytest tests/ -v
 ---
 
 **作成者**: SumihisaYutani  
-**バージョン**: 0.1.0  
-**最終更新**: 2025-08-13
+**バージョン**: 0.2.0  
+**最終更新**: 2025-08-13  
+**Phase 3 完了**: GUI実装・Windows互換性対応
