@@ -1,173 +1,286 @@
 """
-Video Builder Module
-Handles reconstruction of video from processed frames
+Video Builder Module - Reconstructs video from processed frames
+Combines upscaled frames back into video with optional audio preservation
 """
 
 import os
-import ffmpeg
 import logging
+import subprocess
+import shutil
 from pathlib import Path
-from typing import List, Dict, Optional
-from config.settings import PATHS
+from typing import List, Optional, Dict, Any
 
 logger = logging.getLogger(__name__)
 
 
 class VideoBuilder:
-    """Handles video reconstruction from processed frames"""
+    """
+    Video Builder for combining processed frames back into video
+    Supports audio preservation and various output formats
+    """
     
-    def __init__(self, output_dir: str = None):
-        self.output_dir = Path(output_dir) if output_dir else PATHS["output_dir"]
-        self.output_dir.mkdir(parents=True, exist_ok=True)
+    def __init__(self, output_dir: Optional[str] = None):
+        """Initialize VideoBuilder
+        
+        Args:
+            output_dir: Default output directory for videos
+        """
+        self.output_dir = Path(output_dir) if output_dir else Path("output")
+        self.output_dir.mkdir(exist_ok=True)
+        
+        # Check for FFmpeg
+        self._check_ffmpeg()
+        
+    def _check_ffmpeg(self):
+        """Check if FFmpeg is available"""
+        try:
+            result = subprocess.run(
+                ["ffmpeg", "-version"], 
+                capture_output=True, 
+                text=True, 
+                check=True
+            )
+            logger.info("FFmpeg is available")
+            return True
+        except (subprocess.CalledProcessError, FileNotFoundError):
+            logger.warning("FFmpeg not found. Some features may not work.")
+            return False
     
-    def combine_frames_to_video(self, frame_files: List[str], output_path: str,
-                               original_video_path: str = None, 
-                               fps: float = 30.0, preserve_audio: bool = True) -> bool:
+    def combine_frames_to_video(
+        self, 
+        frame_files: List[str], 
+        output_path: str,
+        original_video_path: Optional[str] = None,
+        fps: float = 30.0,
+        preserve_audio: bool = True,
+        quality: str = "high"
+    ) -> bool:
         """
         Combine processed frames back into video
         
         Args:
-            frame_files (List[str]): List of frame file paths in order
-            output_path (str): Output video file path
-            original_video_path (str): Original video path for audio extraction
-            fps (float): Frame rate for output video
-            preserve_audio (bool): Whether to preserve original audio
+            frame_files: List of frame file paths in order
+            output_path: Output video file path
+            original_video_path: Original video for audio extraction
+            fps: Frame rate for output video
+            preserve_audio: Whether to preserve audio from original
+            quality: Video quality preset ('high', 'medium', 'fast')
             
         Returns:
             bool: Success status
         """
         try:
             if not frame_files:
-                logger.error("No frames provided for video combination")
+                logger.error("No frame files provided")
                 return False
+                
+            logger.info(f"Combining {len(frame_files)} frames to video: {output_path}")
             
-            # Sort frame files to ensure correct order
-            frame_files = sorted(frame_files)
+            # Create temporary directory for frame sequence
+            temp_dir = Path("temp_video_build")
+            temp_dir.mkdir(exist_ok=True)
             
-            # Create input pattern for ffmpeg
-            frame_dir = Path(frame_files[0]).parent
-            frame_pattern = str(frame_dir / "frame_%06d.png")
-            
-            # Rename frames to match pattern if needed
-            self._prepare_frames_for_ffmpeg(frame_files, frame_pattern)
-            
-            # Build ffmpeg command
-            input_stream = ffmpeg.input(frame_pattern, pattern_type='sequence', framerate=fps)
-            
-            if preserve_audio and original_video_path and os.path.exists(original_video_path):
-                # Extract audio from original video and combine
-                audio_stream = ffmpeg.input(original_video_path)['a']
-                output_stream = ffmpeg.output(
-                    input_stream, audio_stream, output_path,
-                    vcodec='libx264', acodec='aac',
-                    pix_fmt='yuv420p'
+            try:
+                # Copy and rename frames for FFmpeg sequence
+                self._prepare_frame_sequence(frame_files, temp_dir)
+                
+                # Build FFmpeg command
+                cmd = self._build_ffmpeg_command(
+                    temp_dir, output_path, fps, quality, 
+                    original_video_path if preserve_audio else None
                 )
-            else:
-                # Video only
-                output_stream = ffmpeg.output(
-                    input_stream, output_path,
-                    vcodec='libx264',
-                    pix_fmt='yuv420p'
+                
+                # Execute FFmpeg
+                result = subprocess.run(
+                    cmd, 
+                    capture_output=True, 
+                    text=True,
+                    check=True
                 )
+                
+                logger.info(f"Successfully created video: {output_path}")
+                return True
+                
+            finally:
+                # Cleanup temporary directory
+                shutil.rmtree(temp_dir, ignore_errors=True)
+                
+        except subprocess.CalledProcessError as e:
+            logger.error(f"FFmpeg failed: {e.stderr}")
+            return False
+        except Exception as e:
+            logger.error(f"Video building failed: {e}")
+            return False
+    
+    def _prepare_frame_sequence(self, frame_files: List[str], temp_dir: Path):
+        """Prepare frame sequence for FFmpeg"""
+        for i, frame_file in enumerate(frame_files):
+            if not os.path.exists(frame_file):
+                logger.warning(f"Frame file not found: {frame_file}")
+                continue
+                
+            # Copy frame with sequential naming
+            dest_file = temp_dir / f"frame_{i:06d}.png"
+            shutil.copy2(frame_file, dest_file)
+    
+    def _build_ffmpeg_command(
+        self, 
+        temp_dir: Path, 
+        output_path: str, 
+        fps: float,
+        quality: str,
+        audio_source: Optional[str] = None
+    ) -> List[str]:
+        """Build FFmpeg command for video creation"""
+        
+        # Quality presets
+        quality_presets = {
+            "fast": ["-preset", "fast", "-crf", "28"],
+            "medium": ["-preset", "medium", "-crf", "23"],
+            "high": ["-preset", "slow", "-crf", "18"]
+        }
+        
+        quality_args = quality_presets.get(quality, quality_presets["medium"])
+        
+        # Base command
+        cmd = [
+            "ffmpeg", "-y",  # Overwrite output
+            "-framerate", str(fps),
+            "-i", str(temp_dir / "frame_%06d.png"),
+            "-c:v", "libx264",
+            "-pix_fmt", "yuv420p"
+        ] + quality_args
+        
+        # Add audio if specified
+        if audio_source and os.path.exists(audio_source):
+            cmd.extend([
+                "-i", audio_source,
+                "-c:a", "aac",
+                "-b:a", "128k",
+                "-shortest"  # Match shortest stream
+            ])
+        
+        cmd.append(output_path)
+        
+        return cmd
+    
+    def extract_audio(self, video_path: str, output_path: str) -> bool:
+        """Extract audio from video file
+        
+        Args:
+            video_path: Source video file
+            output_path: Output audio file path
             
-            # Run ffmpeg
-            ffmpeg.run(output_stream, overwrite_output=True, quiet=True)
+        Returns:
+            bool: Success status
+        """
+        try:
+            cmd = [
+                "ffmpeg", "-y",
+                "-i", video_path,
+                "-vn",  # No video
+                "-acodec", "copy",
+                output_path
+            ]
             
-            logger.info(f"Successfully created video: {output_path}")
+            subprocess.run(cmd, capture_output=True, text=True, check=True)
+            logger.info(f"Audio extracted to: {output_path}")
             return True
             
+        except subprocess.CalledProcessError as e:
+            logger.error(f"Audio extraction failed: {e.stderr}")
+            return False
         except Exception as e:
-            logger.error(f"Failed to combine frames: {e}")
+            logger.error(f"Audio extraction error: {e}")
             return False
     
-    def _prepare_frames_for_ffmpeg(self, frame_files: List[str], pattern: str):
-        """
-        Prepare frames for ffmpeg by renaming to sequential pattern
+    def get_video_info(self, video_path: str) -> Dict[str, Any]:
+        """Get video information using FFprobe
         
         Args:
-            frame_files (List[str]): List of frame files
-            pattern (str): Target naming pattern
-        """
-        try:
-            for i, frame_file in enumerate(frame_files, 1):
-                target_name = pattern.replace('%06d', f'{i:06d}')
-                if frame_file != target_name:
-                    os.rename(frame_file, target_name)
-        except Exception as e:
-            logger.error(f"Failed to prepare frames: {e}")
-            raise
-    
-    def create_preview_video(self, frame_files: List[str], output_path: str,
-                           max_frames: int = 30, fps: float = 10.0) -> bool:
-        """
-        Create a short preview video from selected frames
-        
-        Args:
-            frame_files (List[str]): List of frame files
-            output_path (str): Output preview video path
-            max_frames (int): Maximum number of frames to include
-            fps (float): Frame rate for preview
+            video_path: Video file path
             
         Returns:
-            bool: Success status
+            Dict with video information
         """
         try:
-            if not frame_files:
-                return False
+            cmd = [
+                "ffprobe", "-v", "quiet",
+                "-print_format", "json",
+                "-show_format", "-show_streams",
+                video_path
+            ]
             
-            # Select evenly distributed frames for preview
-            if len(frame_files) > max_frames:
-                step = len(frame_files) // max_frames
-                selected_frames = frame_files[::step][:max_frames]
-            else:
-                selected_frames = frame_files
+            result = subprocess.run(cmd, capture_output=True, text=True, check=True)
             
-            return self.combine_frames_to_video(
-                selected_frames, output_path, fps=fps, preserve_audio=False
-            )
+            import json
+            data = json.loads(result.stdout)
             
-        except Exception as e:
-            logger.error(f"Failed to create preview: {e}")
-            return False
-    
-    def get_video_metadata(self, video_path: str) -> Dict:
-        """
-        Extract metadata from video file
-        
-        Args:
-            video_path (str): Path to video file
+            # Extract relevant info
+            video_stream = None
+            audio_stream = None
             
-        Returns:
-            Dict containing metadata
-        """
-        try:
-            probe = ffmpeg.probe(video_path)
-            return {
-                "format": probe.get('format', {}),
-                "streams": probe.get('streams', [])
+            for stream in data.get("streams", []):
+                if stream.get("codec_type") == "video" and not video_stream:
+                    video_stream = stream
+                elif stream.get("codec_type") == "audio" and not audio_stream:
+                    audio_stream = stream
+            
+            info = {
+                "duration": float(data.get("format", {}).get("duration", 0)),
+                "size": int(data.get("format", {}).get("size", 0)),
+                "has_video": video_stream is not None,
+                "has_audio": audio_stream is not None
             }
+            
+            if video_stream:
+                info.update({
+                    "width": int(video_stream.get("width", 0)),
+                    "height": int(video_stream.get("height", 0)),
+                    "fps": eval(video_stream.get("r_frame_rate", "0/1")),
+                    "codec": video_stream.get("codec_name", "unknown")
+                })
+            
+            return info
+            
         except Exception as e:
-            logger.error(f"Failed to get metadata: {e}")
+            logger.error(f"Failed to get video info: {e}")
             return {}
     
-    def copy_metadata(self, source_path: str, target_path: str) -> bool:
-        """
-        Copy metadata from source to target video
+    def create_test_video(
+        self, 
+        output_path: str, 
+        width: int = 640, 
+        height: int = 480,
+        duration: float = 5.0, 
+        fps: float = 30.0
+    ) -> bool:
+        """Create a test video for debugging
         
         Args:
-            source_path (str): Source video path
-            target_path (str): Target video path
+            output_path: Output video path
+            width: Video width
+            height: Video height  
+            duration: Video duration in seconds
+            fps: Frame rate
             
         Returns:
             bool: Success status
         """
         try:
-            # This is a simplified implementation
-            # In practice, you might want to preserve specific metadata
-            source_metadata = self.get_video_metadata(source_path)
-            logger.info(f"Metadata preservation completed for {target_path}")
+            cmd = [
+                "ffmpeg", "-y",
+                "-f", "lavfi",
+                "-i", f"testsrc=duration={duration}:size={width}x{height}:rate={fps}",
+                "-c:v", "libx264",
+                "-pix_fmt", "yuv420p",
+                output_path
+            ]
+            
+            subprocess.run(cmd, capture_output=True, text=True, check=True)
+            logger.info(f"Test video created: {output_path}")
             return True
             
         except Exception as e:
-            logger.error(f"Failed to copy metadata: {e}")
+            logger.error(f"Test video creation failed: {e}")
             return False

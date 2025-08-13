@@ -3,13 +3,24 @@ AI Processing Module
 Handles AI-powered image upscaling using Stable Diffusion
 """
 
-import torch
+try:
+    import torch
+    TORCH_AVAILABLE = True
+except ImportError:
+    TORCH_AVAILABLE = False
+
 import logging
 from PIL import Image
 from typing import List, Optional, Callable
 from pathlib import Path
 import numpy as np
-from diffusers import StableDiffusionImg2ImgPipeline
+
+try:
+    from diffusers import StableDiffusionImg2ImgPipeline
+    DIFFUSERS_AVAILABLE = True
+except ImportError:
+    DIFFUSERS_AVAILABLE = False
+
 from config.settings import AI_SETTINGS, PERFORMANCE
 
 logger = logging.getLogger(__name__)
@@ -19,6 +30,11 @@ class AIUpscaler:
     """AI-powered image upscaling using Stable Diffusion"""
     
     def __init__(self):
+        if not TORCH_AVAILABLE or not DIFFUSERS_AVAILABLE:
+            logger.warning("AI dependencies not available. AI upscaling disabled.")
+            self._available = False
+            return
+            
         self.model_name = AI_SETTINGS["model_name"]
         self.device = AI_SETTINGS["device"]
         self.batch_size = AI_SETTINGS["batch_size"]
@@ -26,6 +42,7 @@ class AIUpscaler:
         self.num_inference_steps = AI_SETTINGS["num_inference_steps"]
         self.pipeline = None
         self._model_loaded = False
+        self._available = True
     
     def load_model(self) -> bool:
         """
@@ -34,6 +51,10 @@ class AIUpscaler:
         Returns:
             bool: Success status
         """
+        if not self._available:
+            logger.error("AI dependencies not available")
+            return False
+            
         try:
             if self._model_loaded:
                 return True
@@ -86,6 +107,10 @@ class AIUpscaler:
         Returns:
             bool: Success status
         """
+        if not self._available:
+            logger.error("AI dependencies not available")
+            return False
+            
         try:
             if not self._model_loaded:
                 if not self.load_model():

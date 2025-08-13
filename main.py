@@ -56,7 +56,7 @@ def cli(verbose):
     if verbose:
         logging.getLogger().setLevel(logging.DEBUG)
     
-    click.echo("🎬 UpScale App - AI Video Upscaling Tool")
+    click.echo("UpScale App - AI Video Upscaling Tool")
 
 
 @cli.command()
@@ -68,8 +68,8 @@ def cli(verbose):
 def upscale(input_file, output, scale, no_ai, no_cleanup):
     """Upscale a video file using AI"""
     
-    click.echo(f"📹 Processing: {input_file}")
-    click.echo(f"🔍 Scale factor: {scale}x")
+    click.echo(f"Processing: {input_file}")
+    click.echo(f"Scale factor: {scale}x")
     
     # Initialize app
     app = UpScaleApp(use_ai=not no_ai, temp_cleanup=not no_cleanup)
@@ -77,9 +77,9 @@ def upscale(input_file, output, scale, no_ai, no_cleanup):
     # Show system info
     system_info = app.get_system_info()
     if system_info["cuda_available"]:
-        click.echo(f"🚀 GPU acceleration available: {system_info['cuda_device_name']}")
+        click.echo(f"GPU acceleration available: {system_info['cuda_device_name']}")
     else:
-        click.echo("⚠️  Using CPU processing (will be slower)")
+        click.echo("WARNING: Using CPU processing (will be slower)")
     
     # Setup progress tracking
     progress_bar = ProgressBar()
@@ -94,7 +94,7 @@ def upscale(input_file, output, scale, no_ai, no_cleanup):
         )
         
         if result["success"]:
-            click.echo(f"✅ Success! Output saved to: {result['output_path']}")
+            click.echo(f"SUCCESS: Output saved to: {result['output_path']}")
             
             # Show statistics
             stats = result["stats"]
@@ -105,14 +105,14 @@ def upscale(input_file, output, scale, no_ai, no_cleanup):
             click.echo(f"  • Resolution: {stats.get('original_resolution')} → {stats.get('output_resolution')}")
             
         else:
-            click.echo(f"❌ Error: {result['error']}", err=True)
+            click.echo(f"ERROR: {result['error']}", err=True)
             sys.exit(1)
             
     except KeyboardInterrupt:
-        click.echo("\n🛑 Process interrupted by user")
+        click.echo("\nProcess interrupted by user")
         sys.exit(1)
     except Exception as e:
-        click.echo(f"💥 Unexpected error: {e}", err=True)
+        click.echo(f"Unexpected error: {e}", err=True)
         sys.exit(1)
 
 

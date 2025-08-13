@@ -12,7 +12,7 @@ VIDEO_SETTINGS = {
     "supported_formats": [".mp4"],
     "supported_codecs": ["h264", "h265", "hevc", "avc"],
     "max_file_size_gb": 2,
-    "max_duration_minutes": 30,
+    "max_duration_minutes": 60,
     "default_upscale_factor": 1.5,
     "max_resolution": (1920, 1080)
 }

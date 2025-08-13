@@ -78,9 +78,9 @@ class VideoProcessor:
                 result["error"] = f"Resolution too high: {width}x{height} > {self.max_resolution[0]}x{self.max_resolution[1]}"
                 return result
             
-            # Validate codec
+            # Validate codec (skip if unknown from OpenCV)
             codec = video_info.get("codec_name", "").lower()
-            if codec not in self.supported_codecs:
+            if codec != "unknown" and codec not in self.supported_codecs:
                 result["error"] = f"Unsupported codec: {codec}"
                 return result
             
@@ -95,7 +95,7 @@ class VideoProcessor:
     
     def _get_video_info(self, file_path: str) -> Optional[Dict]:
         """
-        Extract video information using ffprobe
+        Extract video information using OpenCV with ffprobe fallback
         
         Args:
             file_path (str): Path to video file
@@ -104,29 +104,65 @@ class VideoProcessor:
             Dict containing video information or None if failed
         """
         try:
-            probe = ffmpeg.probe(file_path)
-            video_stream = next((stream for stream in probe['streams'] 
-                               if stream['codec_type'] == 'video'), None)
+            # Try ffprobe first
+            try:
+                probe = ffmpeg.probe(file_path)
+                video_stream = next((stream for stream in probe['streams'] 
+                                   if stream['codec_type'] == 'video'), None)
+                
+                if video_stream:
+                    info = {
+                        "filename": os.path.basename(file_path),
+                        "duration": float(probe['format']['duration']),
+                        "size": int(probe['format']['size']),
+                        "width": int(video_stream['width']),
+                        "height": int(video_stream['height']),
+                        "codec_name": video_stream['codec_name'],
+                        "bit_rate": int(probe['format'].get('bit_rate', 0)),
+                        "frame_rate": eval(video_stream.get('r_frame_rate', '0/1')),
+                        "frame_count": int(video_stream.get('nb_frames', 0))
+                    }
+                    
+                    # Calculate frame count if not available
+                    if info["frame_count"] == 0:
+                        info["frame_count"] = int(info["duration"] * info["frame_rate"])
+                    
+                    return info
+            except Exception as ffmpeg_error:
+                logger.warning(f"FFprobe failed, trying OpenCV: {ffmpeg_error}")
             
-            if not video_stream:
+            # Fallback to OpenCV
+            cap = cv2.VideoCapture(file_path)
+            if not cap.isOpened():
                 return None
+            
+            # Get basic information from OpenCV
+            frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+            fps = cap.get(cv2.CAP_PROP_FPS)
+            width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+            height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+            
+            # Calculate duration
+            duration = frame_count / fps if fps > 0 else 0
+            
+            # Get file size
+            file_size = os.path.getsize(file_path)
+            
+            cap.release()
             
             info = {
                 "filename": os.path.basename(file_path),
-                "duration": float(probe['format']['duration']),
-                "size": int(probe['format']['size']),
-                "width": int(video_stream['width']),
-                "height": int(video_stream['height']),
-                "codec_name": video_stream['codec_name'],
-                "bit_rate": int(probe['format'].get('bit_rate', 0)),
-                "frame_rate": eval(video_stream.get('r_frame_rate', '0/1')),
-                "frame_count": int(video_stream.get('nb_frames', 0))
+                "duration": duration,
+                "size": file_size,
+                "width": width,
+                "height": height,
+                "codec_name": "unknown",  # OpenCV doesn't provide codec info easily
+                "bit_rate": 0,  # Not available from OpenCV
+                "frame_rate": fps,
+                "frame_count": frame_count
             }
             
-            # Calculate frame count if not available
-            if info["frame_count"] == 0:
-                info["frame_count"] = int(info["duration"] * info["frame_rate"])
-            
+            logger.info(f"Using OpenCV for video info: {width}x{height}, {frame_count} frames, {fps:.2f} FPS")
             return info
             
         except Exception as e:
@@ -212,21 +248,78 @@ class VideoFrameExtractor:
             output_pattern = str(self.temp_dir / f"{video_name}_frame_%06d.png")
         
         try:
-            # Use ffmpeg to extract frames
-            (
-                ffmpeg
-                .input(video_path)
-                .output(output_pattern, format='image2', vcodec='png')
-                .overwrite_output()
-                .run(quiet=True)
-            )
+            # Try ffmpeg first
+            try:
+                (
+                    ffmpeg
+                    .input(video_path)
+                    .output(output_pattern, format='image2', vcodec='png')
+                    .overwrite_output()
+                    .run(quiet=True)
+                )
+                
+                # Get list of extracted frames
+                frame_files = sorted(self.temp_dir.glob(f"{Path(video_path).stem}_frame_*.png"))
+                return [str(f) for f in frame_files]
+                
+            except Exception as ffmpeg_error:
+                logger.warning(f"FFmpeg frame extraction failed, trying OpenCV: {ffmpeg_error}")
             
-            # Get list of extracted frames
-            frame_files = sorted(self.temp_dir.glob(f"{Path(video_path).stem}_frame_*.png"))
-            return [str(f) for f in frame_files]
+            # Fallback to OpenCV
+            return self._extract_frames_opencv(video_path)
             
         except Exception as e:
             logger.error(f"Frame extraction failed: {e}")
+            return []
+    
+    def _extract_frames_opencv(self, video_path: str) -> List[str]:
+        """
+        OpenCVを使用したフレーム抽出
+        
+        Args:
+            video_path (str): ビデオファイルパス
+            
+        Returns:
+            List[str]: 抽出されたフレームファイルのパス
+        """
+        try:
+            import cv2
+            
+            cap = cv2.VideoCapture(video_path)
+            if not cap.isOpened():
+                logger.error(f"Could not open video: {video_path}")
+                return []
+            
+            frame_files = []
+            frame_count = 0
+            video_name = Path(video_path).stem
+            
+            while True:
+                ret, frame = cap.read()
+                if not ret:
+                    break
+                
+                # フレームファイル名を生成
+                frame_filename = f"{video_name}_frame_{frame_count:06d}.png"
+                frame_path = self.temp_dir / frame_filename
+                
+                # フレームを保存
+                success = cv2.imwrite(str(frame_path), frame)
+                if success:
+                    frame_files.append(str(frame_path))
+                
+                frame_count += 1
+                
+                # 進行状況をログ出力（1000フレームごと）
+                if frame_count % 1000 == 0:
+                    logger.info(f"Extracted {frame_count} frames...")
+            
+            cap.release()
+            logger.info(f"Extracted {len(frame_files)} frames using OpenCV")
+            return frame_files
+            
+        except Exception as e:
+            logger.error(f"OpenCV frame extraction failed: {e}")
             return []
     
     def extract_frame_at_time(self, video_path: str, timestamp: float, 
