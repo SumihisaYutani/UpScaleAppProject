@@ -1,0 +1,18 @@
+# Minimal Requirements for UpScale App
+# These are the core dependencies needed for basic functionality
+
+# Core dependencies for video processing (lightweight versions)
+Pillow>=9.0.0
+numpy>=1.21.0
+tqdm>=4.64.0
+click>=8.0.0
+python-dotenv>=0.19.0
+
+# System monitoring (optional but lightweight)
+psutil>=5.8.0
+
+# For testing
+pytest>=7.0.0
+
+# Note: Heavy dependencies (torch, diffusers, opencv-python, ffmpeg-python) 
+# are marked as optional and will be installed separately if available

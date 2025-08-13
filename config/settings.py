@@ -47,6 +47,69 @@ LOGGING = {
     "format": "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 }
 
-# Create necessary directories
-for path in PATHS.values():
-    path.mkdir(parents=True, exist_ok=True)
+# Dependency checking
+DEPENDENCIES = {
+    "torch": False,
+    "cv2": False,
+    "diffusers": False,
+    "ffmpeg": False,
+    "PIL": False,
+    "numpy": False
+}
+
+# Check available dependencies
+try:
+    import torch
+    DEPENDENCIES["torch"] = True
+except ImportError:
+    pass
+
+try:
+    import cv2
+    DEPENDENCIES["cv2"] = True
+except ImportError:
+    pass
+
+try:
+    import diffusers
+    DEPENDENCIES["diffusers"] = True
+except ImportError:
+    pass
+
+try:
+    import ffmpeg
+    DEPENDENCIES["ffmpeg"] = True
+except ImportError:
+    pass
+
+try:
+    from PIL import Image
+    DEPENDENCIES["PIL"] = True
+except ImportError:
+    pass
+
+try:
+    import numpy
+    DEPENDENCIES["numpy"] = True
+except ImportError:
+    pass
+
+# Adjust AI settings based on available dependencies
+if not DEPENDENCIES["torch"] or not DEPENDENCIES["diffusers"]:
+    AI_SETTINGS["device"] = "cpu"
+    AI_SETTINGS["model_name"] = "fallback"
+
+# Create necessary directories with error handling
+for name, path in PATHS.items():
+    try:
+        path.mkdir(parents=True, exist_ok=True)
+    except Exception as e:
+        print(f"Warning: Could not create directory {name} at {path}: {e}")
+
+# Environment status
+ENVIRONMENT_STATUS = {
+    "ai_available": DEPENDENCIES["torch"] and DEPENDENCIES["diffusers"],
+    "video_processing_available": DEPENDENCIES["cv2"] and DEPENDENCIES["ffmpeg"],
+    "basic_functionality_available": DEPENDENCIES["PIL"] and DEPENDENCIES["numpy"],
+    "dependencies": DEPENDENCIES
+}

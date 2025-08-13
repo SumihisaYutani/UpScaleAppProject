@@ -18,22 +18,53 @@
 - FFmpeg（システムにインストール済みである必要があります）
 - 推奨: NVIDIA GPU（CUDA対応）
 
-### セットアップ
+### 🎯 クイックスタート
 ```bash
 # リポジトリのクローン
 git clone https://github.com/SumihisaYutani/UpScaleAppProject.git
 cd UpScaleAppProject
 
+# 自動環境テスト
+python quick_test.py
+
+# 自動セットアップ（推奨）
+python setup_environment.py
+```
+
+### 🔧 手動セットアップ
+```bash
 # 仮想環境の作成
 python -m venv venv
 source venv/bin/activate  # Windows: venv\Scripts\activate
 
-# 依存関係のインストール
-pip install -r requirements.txt
+# 段階的依存関係インストール
+python install_dependencies.py
 
-# 開発版インストール（オプション）
-pip install -e .
+# 環境テスト
+python test_environment.py
 ```
+
+### ⚠️ トラブルシューティング
+Pythonの実行でエラーが出る場合：
+
+**Windows:**
+```cmd
+# 異なるPythonコマンドを試行
+python --version
+py --version
+python3 --version
+
+# バッチファイルを使用
+run_test.bat
+```
+
+**Linux/macOS:**
+```bash
+# シェルスクリプトを使用
+./run_test.sh
+```
+
+📚 **詳細な環境設定ガイド**: [ENVIRONMENT_SETUP.md](ENVIRONMENT_SETUP.md)
 
 ## 💻 使用方法
 
