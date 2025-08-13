@@ -137,14 +137,52 @@ class SimpleUpScaleGUI:
         # Processing mode
         ctk.CTkLabel(settings_container, text="Mode:").grid(row=0, column=2, padx=10, pady=10, sticky="w")
         self.mode_var = ctk.StringVar(value="Simple")
+        
+        # Check for waifu2x availability
+        try:
+            from config.settings import ENVIRONMENT_STATUS
+            waifu2x_available = ENVIRONMENT_STATUS.get("waifu2x_available", False)
+        except:
+            waifu2x_available = False
+        
+        # Mode options based on availability
+        if waifu2x_available:
+            mode_options = ["Simple", "Waifu2x (High Quality)", "Basic Processing"]
+        else:
+            mode_options = ["Simple", "Basic Processing"]
+            
         mode_menu = ctk.CTkComboBox(
             settings_container,
-            values=["Simple", "Basic Processing"],
+            values=mode_options,
             variable=self.mode_var,
             state="readonly",
-            width=120
+            width=150
         )
         mode_menu.grid(row=0, column=3, padx=10, pady=10, sticky="w")
+        
+        # Waifu2x specific settings (row 1)
+        if waifu2x_available:
+            ctk.CTkLabel(settings_container, text="Noise Reduction:").grid(row=1, column=0, padx=10, pady=10, sticky="w")
+            self.noise_var = ctk.StringVar(value="1")
+            noise_menu = ctk.CTkComboBox(
+                settings_container,
+                values=["0 (None)", "1 (Weak)", "2 (Medium)", "3 (Strong)"],
+                variable=self.noise_var,
+                state="readonly",
+                width=100
+            )
+            noise_menu.grid(row=1, column=1, padx=10, pady=10, sticky="w")
+            
+            ctk.CTkLabel(settings_container, text="Model:").grid(row=1, column=2, padx=10, pady=10, sticky="w")
+            self.model_var = ctk.StringVar(value="CUNet")
+            model_menu = ctk.CTkComboBox(
+                settings_container,
+                values=["CUNet (Balanced)", "Anime Style", "Photo"],
+                variable=self.model_var,
+                state="readonly",
+                width=150
+            )
+            model_menu.grid(row=1, column=3, padx=10, pady=10, sticky="w")
         
     def _setup_actions_section(self):
         """Setup actions section"""
@@ -177,7 +215,24 @@ class SimpleUpScaleGUI:
             border_width=2,
             text_color=("gray10", "gray90")
         )
-        self.test_button.pack(side="right", padx=10, pady=10)
+        self.test_button.pack(side="right", padx=(5, 10), pady=10)
+        
+        # Add waifu2x test button if available
+        try:
+            from config.settings import ENVIRONMENT_STATUS
+            if ENVIRONMENT_STATUS.get("waifu2x_available", False):
+                self.waifu2x_test_button = ctk.CTkButton(
+                    button_container,
+                    text="Test Waifu2x",
+                    command=self._test_waifu2x,
+                    height=35,
+                    fg_color="transparent",
+                    border_width=2,
+                    text_color=("gray10", "gray90")
+                )
+                self.waifu2x_test_button.pack(side="right", padx=(5, 5), pady=10)
+        except:
+            pass
         
     def _setup_status_section(self):
         """Setup status section"""
@@ -331,6 +386,86 @@ Status: Analysis failed"""
             CTkMessagebox(
                 title="FFmpeg Test",
                 message=f"Error testing FFmpeg: {str(e)}",
+                icon="cancel"
+            )
+    
+    def _test_waifu2x(self):
+        """Test Waifu2x availability"""
+        try:
+            # Try to import and test waifu2x
+            try:
+                from modules.waifu2x_processor import test_waifu2x_availability, Waifu2xUpscaler
+                
+                availability = test_waifu2x_availability()
+                
+                if availability["any_available"]:
+                    # Test actual initialization
+                    try:
+                        upscaler = Waifu2xUpscaler()
+                        if upscaler.is_available():
+                            backend_info = upscaler.get_info()
+                            
+                            message = f"""Waifu2x is available!
+                            
+Backend: {backend_info['backend']}
+GPU ID: {backend_info['gpu_id']}
+Scale: {backend_info['scale']}x
+Noise Level: {backend_info['noise']}
+Model: {backend_info['model']}
+
+Supported Scales: {', '.join(map(str, backend_info['supported_scales']))}
+Supported Noise Levels: {', '.join(map(str, backend_info['supported_noise_levels']))}"""
+                            
+                            CTkMessagebox(
+                                title="Waifu2x Test",
+                                message=message,
+                                icon="check"
+                            )
+                        else:
+                            CTkMessagebox(
+                                title="Waifu2x Test",
+                                message="Waifu2x imported but initialization failed",
+                                icon="warning"
+                            )
+                    except Exception as e:
+                        CTkMessagebox(
+                            title="Waifu2x Test",
+                            message=f"Waifu2x initialization failed: {str(e)}",
+                            icon="warning"
+                        )
+                else:
+                    backends_status = []
+                    if not availability["ncnn"]:
+                        backends_status.append("NCNN-Vulkan: Not available")
+                    if not availability["chainer"]:
+                        backends_status.append("Chainer: Not available")
+                    
+                    message = f"""Waifu2x not available.
+
+{chr(10).join(backends_status)}
+
+To install Waifu2x support:
+pip install waifu2x-ncnn-vulkan-python
+
+Note: Requires Vulkan-compatible GPU"""
+                    
+                    CTkMessagebox(
+                        title="Waifu2x Test",
+                        message=message,
+                        icon="cancel"
+                    )
+                    
+            except ImportError:
+                CTkMessagebox(
+                    title="Waifu2x Test",
+                    message="Waifu2x module not found.\n\nInstall with:\npip install waifu2x-ncnn-vulkan-python",
+                    icon="cancel"
+                )
+                
+        except Exception as e:
+            CTkMessagebox(
+                title="Waifu2x Test",
+                message=f"Error testing Waifu2x: {str(e)}",
                 icon="cancel"
             )
             

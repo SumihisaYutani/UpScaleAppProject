@@ -1,0 +1,15 @@
+# Waifu2x Dependencies for High-Quality Image Upscaling
+# These are the dependencies needed for waifu2x AI upscaling functionality
+
+# Primary waifu2x implementation (NCNN + Vulkan for best performance)
+waifu2x-ncnn-vulkan-python>=1.0.0
+
+# Alternative implementation (Chainer-based, optional)
+# waifu2x>=2024.0.1
+
+# Core image processing (likely already installed)
+Pillow>=10.0.1
+numpy>=1.24.3
+
+# Optional: Additional image processing utilities
+# opencv-python>=4.8.1  # For advanced image preprocessing

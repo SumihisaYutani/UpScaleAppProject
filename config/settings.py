@@ -23,7 +23,19 @@ AI_SETTINGS = {
     "batch_size": 4,
     "guidance_scale": 7.5,
     "num_inference_steps": 20,
-    "device": "cuda" if os.environ.get("CUDA_AVAILABLE") else "cpu"
+    "device": "cuda" if os.environ.get("CUDA_AVAILABLE") else "cpu",
+    "preferred_method": "auto"  # "auto", "waifu2x", "stable_diffusion", "simple"
+}
+
+# Waifu2x specific settings
+WAIFU2X_SETTINGS = {
+    "backend": "auto",  # "auto", "ncnn", "chainer"
+    "gpu_id": 0,  # GPU device ID (0 for first GPU, -1 for CPU)
+    "scale": 2,  # Scaling factor (1, 2, 4, 8, 16, 32 for ncnn)
+    "noise": 1,  # Noise reduction level (-1: none, 0-3: weak to strong)
+    "model": "models-cunet",  # Model type for ncnn backend
+    "tile_size": 512,  # Tile size for processing large images
+    "tile_pad": 10  # Padding for tiles
 }
 
 # File paths
@@ -54,7 +66,9 @@ DEPENDENCIES = {
     "diffusers": False,
     "ffmpeg": False,
     "PIL": False,
-    "numpy": False
+    "numpy": False,
+    "waifu2x_ncnn": False,
+    "waifu2x_chainer": False
 }
 
 # Check available dependencies
@@ -94,6 +108,18 @@ try:
 except ImportError:
     pass
 
+try:
+    from waifu2x_ncnn_vulkan import Waifu2x
+    DEPENDENCIES["waifu2x_ncnn"] = True
+except ImportError:
+    pass
+
+try:
+    import waifu2x
+    DEPENDENCIES["waifu2x_chainer"] = True
+except ImportError:
+    pass
+
 # Adjust AI settings based on available dependencies
 if not DEPENDENCIES["torch"] or not DEPENDENCIES["diffusers"]:
     AI_SETTINGS["device"] = "cpu"
@@ -109,7 +135,12 @@ for name, path in PATHS.items():
 # Environment status
 ENVIRONMENT_STATUS = {
     "ai_available": DEPENDENCIES["torch"] and DEPENDENCIES["diffusers"],
+    "waifu2x_available": DEPENDENCIES["waifu2x_ncnn"] or DEPENDENCIES["waifu2x_chainer"],
+    "waifu2x_ncnn_available": DEPENDENCIES["waifu2x_ncnn"],
+    "waifu2x_chainer_available": DEPENDENCIES["waifu2x_chainer"],
     "video_processing_available": DEPENDENCIES["cv2"] and DEPENDENCIES["ffmpeg"],
     "basic_functionality_available": DEPENDENCIES["PIL"] and DEPENDENCIES["numpy"],
+    "any_ai_available": (DEPENDENCIES["torch"] and DEPENDENCIES["diffusers"]) or 
+                       DEPENDENCIES["waifu2x_ncnn"] or DEPENDENCIES["waifu2x_chainer"],
     "dependencies": DEPENDENCIES
 }

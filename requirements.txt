@@ -11,6 +11,9 @@ diffusers==0.21.4
 transformers==4.33.2
 accelerate==0.23.0
 
+# Waifu2x dependencies for high-quality upscaling
+waifu2x-ncnn-vulkan-python>=1.0.0
+
 # Web framework for API
 fastapi==0.103.1
 uvicorn==0.23.2

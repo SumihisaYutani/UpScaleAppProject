@@ -1,15 +1,17 @@
 # UpScaleAppProject
 
-**AI Video Upscaling Tool** - 低解像度のMP4動画をAI技術（Stable Diffusion）を使用して高解像度・高画質に変換するツール
+**AI Video Upscaling Tool** - 低解像度のMP4動画をAI技術（Waifu2x・Stable Diffusion）を使用して高解像度・高画質に変換するツール
 
 ## 🌟 特徴
 
-- **AI駆動のアップスケール**: Stable Diffusionを使用した高品質な画質向上
+- **複数のAI手法対応**: Waifu2x（高速・高品質）、Stable Diffusion（カスタマイズ可能）
+- **Waifu2x統合**: 専用AI手法による超高画質アップスケーリング
 - **対応フォーマット**: MP4ファイル（H.264, H.265/HEVC, AVC対応）
-- **多段階スケーリング**: 1.2x, 1.5x, 2.0x, 2.5x のスケール対応
+- **多段階スケーリング**: 1x, 2x, 4x, 8x, 16x, 32x まで対応（Waifu2x）
+- **ノイズ除去**: 4段階のノイズリダクション機能
 - **バッチ処理**: フレーム単位での効率的な処理
 - **GUI & CLI**: グラフィカルユーザーインターフェース＋コマンドライン版
-- **GPU加速**: CUDA対応でより高速な処理
+- **GPU加速**: CUDA・Vulkan対応でより高速な処理
 - **軽量版対応**: AI依存関係なしでの基本機能利用
 
 ## 🚀 インストール
@@ -17,7 +19,8 @@
 ### 前提条件
 - Python 3.8以降
 - FFmpeg（システムにインストール済みである必要があります）
-- 推奨: NVIDIA GPU（CUDA対応）
+- 推奨: Vulkan対応GPU（Waifu2x用）
+- 推奨: NVIDIA GPU（CUDA対応、Stable Diffusion用）
 
 ### 🎯 クイックスタート
 
@@ -30,11 +33,14 @@ cd UpScaleAppProject
 # GUI依存関係のインストール
 pip install -r requirements_gui.txt
 
-# 軽量GUI版を起動（AI機能なし）
+# Waifu2x高画質機能を追加（推奨）
+pip install -r requirements_waifu2x.txt
+
+# 軽量GUI版を起動（基本機能＋Waifu2x）
 python simple_gui.py
 
-# フルGUI版を起動（AI機能あり）
-pip install -r requirements.txt  # 重い依存関係も必要
+# フルGUI版を起動（全AI機能）
+pip install -r requirements.txt  # Stable Diffusion等も含む
 python main_gui.py
 ```
 
@@ -56,7 +62,10 @@ source venv/bin/activate  # Windows: venv\Scripts\activate
 # 基本依存関係（軽量）
 pip install -r requirements_gui.txt
 
-# AI機能も使用する場合
+# Waifu2x高画質機能を追加
+pip install -r requirements_waifu2x.txt
+
+# 全AI機能を使用する場合
 pip install -r requirements.txt
 
 # 環境テスト
@@ -100,23 +109,28 @@ python test_environment.py
 
 ### 📱 GUI版（推奨）
 
-**軽量GUI版（AI機能なし）**:
+**軽量GUI版（Waifu2x対応）**:
 ```bash
 python simple_gui.py
 ```
 - ファイル選択とブラウズ
 - 基本的な動画情報表示
-- スケールファクター設定（1.2x〜2.5x）
-- FFmpeg テスト機能
+- スケールファクター設定（1x〜32x、Waifu2x使用時）
+- Waifu2x高画質アップスケール機能
+- ノイズ除去レベル設定（0-3段階）
+- モデル選択（CUNet、Anime Style、Photo）
+- FFmpeg・Waifu2x テスト機能
 
-**フルGUI版（AI機能あり）**:
+**フルGUI版（全AI機能）**:
 ```bash
 python main_gui.py
 ```
-- 完全なAI アップスケール機能
+- Waifu2x + Stable Diffusion 統合
+- 自動最適手法選択
 - リアルタイム進捗表示
 - GPU/CPU 使用状況監視
 - 高度な設定オプション
+- バッチ処理対応
 
 ### 💻 CLI版
 
@@ -179,7 +193,8 @@ UpScaleAppProject/
 │   ├── modules/           
 │   │   ├── video_processor.py     # 動画処理
 │   │   ├── video_builder.py       # 動画再構築
-│   │   ├── ai_processor.py        # AI処理
+│   │   ├── ai_processor.py        # 統合AI処理
+│   │   ├── waifu2x_processor.py   # Waifu2x高画質処理
 │   │   ├── enhanced_ai_processor.py  # 拡張AI処理
 │   │   └── performance_monitor.py   # パフォーマンス監視
 │   ├── gui/
@@ -195,6 +210,8 @@ UpScaleAppProject/
 ├── simple_gui.py                   # 軽量GUI版
 ├── requirements.txt                # Python依存関係（フル版）
 ├── requirements_gui.txt            # GUI依存関係（軽量版）
+├── requirements_waifu2x.txt        # Waifu2x依存関係
+├── test_waifu2x.py                 # Waifu2xテストスクリプト
 └── PROJECT_DESIGN.md               # 設計書
 ```
 
@@ -202,11 +219,16 @@ UpScaleAppProject/
 
 主要な設定は `config/settings.py` で管理されています：
 
+### 基本設定
 - **最大ファイルサイズ**: デフォルト2GB
 - **最大動画長**: デフォルト60分（拡張）
-- **アップスケール倍率**: 1.2x, 1.5x, 2.0x, 2.5x対応
+- **アップスケール倍率**: 1x〜32x対応（手法により異なる）
 - **品質プリセット**: Fast, Balanced, Quality
-- **AI処理設定**: モデル選択、バッチサイズ等
+
+### AI処理設定
+- **優先手法**: Auto（自動選択）、Waifu2x、Stable Diffusion、Simple
+- **Waifu2x設定**: スケール、ノイズレベル、モデル種類
+- **Stable Diffusion設定**: モデル選択、バッチサイズ等
 
 ## 🔧 トラブルシューティング
 
@@ -230,7 +252,17 @@ brew install ffmpeg
 python -c "import torch; print(torch.cuda.is_available())"
 ```
 
-**3. メモリ不足**
+**3. Waifu2x関連エラー**
+```bash
+# Waifu2xの動作確認
+python test_waifu2x.py
+
+# Vulkan サポート確認
+# Windows: DirectX診断ツールでVulkan対応を確認
+# Linux: vulkan-utils をインストール後 vulkaninfo 実行
+```
+
+**4. メモリ不足**
 - より小さなバッチサイズを使用
 - 一時ファイルをクリーンアップ
 - システムメモリを増やす
@@ -243,6 +275,12 @@ python -m pytest tests/
 
 # 詳細なテスト結果
 python -m pytest tests/ -v
+
+# Waifu2x機能テスト
+python test_waifu2x.py
+
+# 環境テスト
+python test_environment.py
 ```
 
 ## 📋 制限事項
