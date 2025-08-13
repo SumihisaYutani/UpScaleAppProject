@@ -1,0 +1,16 @@
+# GUI Dependencies for UpScale App
+# These are additional dependencies needed for the GUI version
+
+# CustomTkinter for modern GUI
+customtkinter>=5.2.0
+CTkMessagebox>=2.5
+CTkListbox>=1.4
+
+# PIL improvements for GUI
+Pillow>=10.0.1
+
+# Additional GUI utilities
+tkinterdnd2>=0.3.0  # Drag and drop support
+
+# Development GUI tools (optional)
+tkinter-tooltip>=2.0.0
