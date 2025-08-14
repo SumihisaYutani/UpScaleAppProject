@@ -29,13 +29,17 @@ AI_SETTINGS = {
 
 # Waifu2x specific settings
 WAIFU2X_SETTINGS = {
-    "backend": "auto",  # "auto", "ncnn", "chainer"
+    "backend": "auto",  # "auto", "amd", "ncnn", "chainer"
     "gpu_id": 0,  # GPU device ID (0 for first GPU, -1 for CPU)
     "scale": 2,  # Scaling factor (1, 2, 4, 8, 16, 32 for ncnn)
     "noise": 1,  # Noise reduction level (-1: none, 0-3: weak to strong)
-    "model": "models-cunet",  # Model type for ncnn backend
+    "model": "models-cunet",  # Model type for backend
     "tile_size": 512,  # Tile size for processing large images
-    "tile_pad": 10  # Padding for tiles
+    "tile_pad": 10,  # Padding for tiles
+    # AMD GPU specific settings
+    "amd_backend_type": "auto",  # "auto", "rocm", "vulkan"
+    "amd_optimize": True,  # Apply AMD-specific optimizations
+    "amd_memory_fraction": 0.9  # Memory fraction for ROCm backend
 }
 
 # File paths
@@ -68,7 +72,8 @@ DEPENDENCIES = {
     "PIL": False,
     "numpy": False,
     "waifu2x_ncnn": False,
-    "waifu2x_chainer": False
+    "waifu2x_chainer": False,
+    "waifu2x_amd": False
 }
 
 # Check available dependencies
@@ -120,6 +125,21 @@ try:
 except ImportError:
     pass
 
+# Check AMD backend availability
+try:
+    from src.modules.amd_waifu2x_backend import test_amd_waifu2x_availability
+    amd_info = test_amd_waifu2x_availability()
+    DEPENDENCIES["waifu2x_amd"] = amd_info.get('amd_backend_available', False)
+except ImportError:
+    try:
+        import sys
+        sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'src'))
+        from modules.amd_waifu2x_backend import test_amd_waifu2x_availability
+        amd_info = test_amd_waifu2x_availability()
+        DEPENDENCIES["waifu2x_amd"] = amd_info.get('amd_backend_available', False)
+    except ImportError:
+        DEPENDENCIES["waifu2x_amd"] = False
+
 # Check mock waifu2x availability
 try:
     from src.modules.mock_waifu2x import MockWaifu2xUpscaler
@@ -148,13 +168,14 @@ for name, path in PATHS.items():
 # Environment status
 ENVIRONMENT_STATUS = {
     "ai_available": DEPENDENCIES["torch"] and DEPENDENCIES["diffusers"],
-    "waifu2x_available": DEPENDENCIES["waifu2x_ncnn"] or DEPENDENCIES["waifu2x_chainer"] or DEPENDENCIES["waifu2x_mock"],
+    "waifu2x_available": DEPENDENCIES["waifu2x_amd"] or DEPENDENCIES["waifu2x_ncnn"] or DEPENDENCIES["waifu2x_chainer"] or DEPENDENCIES["waifu2x_mock"],
+    "waifu2x_amd_available": DEPENDENCIES["waifu2x_amd"],
     "waifu2x_ncnn_available": DEPENDENCIES["waifu2x_ncnn"],
     "waifu2x_chainer_available": DEPENDENCIES["waifu2x_chainer"],
     "waifu2x_mock_available": DEPENDENCIES["waifu2x_mock"],
     "video_processing_available": DEPENDENCIES["cv2"] and DEPENDENCIES["ffmpeg"],
     "basic_functionality_available": DEPENDENCIES["PIL"] and DEPENDENCIES["numpy"],
     "any_ai_available": (DEPENDENCIES["torch"] and DEPENDENCIES["diffusers"]) or 
-                       DEPENDENCIES["waifu2x_ncnn"] or DEPENDENCIES["waifu2x_chainer"] or DEPENDENCIES["waifu2x_mock"],
+                       DEPENDENCIES["waifu2x_amd"] or DEPENDENCIES["waifu2x_ncnn"] or DEPENDENCIES["waifu2x_chainer"] or DEPENDENCIES["waifu2x_mock"],
     "dependencies": DEPENDENCIES
 }

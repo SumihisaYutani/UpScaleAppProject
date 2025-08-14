@@ -16,6 +16,17 @@ try:
 except ImportError:
     WAIFU2X_CHAINER_AVAILABLE = False
 
+# AMD GPU backend support
+try:
+    from .amd_waifu2x_backend import AMDWaifu2xBackend, test_amd_waifu2x_availability
+    AMD_BACKEND_AVAILABLE = True
+except ImportError:
+    try:
+        from src.modules.amd_waifu2x_backend import AMDWaifu2xBackend, test_amd_waifu2x_availability
+        AMD_BACKEND_AVAILABLE = True
+    except ImportError:
+        AMD_BACKEND_AVAILABLE = False
+
 # Import mock implementation as fallback
 try:
     from .mock_waifu2x import MockWaifu2xUpscaler, test_mock_waifu2x_availability
@@ -54,11 +65,11 @@ class Waifu2xUpscaler:
         Initialize Waifu2x upscaler
         
         Args:
-            backend: "ncnn", "chainer", or "auto"
+            backend: "ncnn", "chainer", "amd", or "auto"
             gpu_id: GPU device ID (0 for first GPU, -1 for CPU)
             scale: Scaling factor (1, 2, 4, 8, 16, 32)
             noise: Noise reduction level (-1: none, 0-3: weak to strong)
-            model: Model type for ncnn backend
+            model: Model type for backend
         """
         self.backend = backend
         self.gpu_id = gpu_id
@@ -70,7 +81,24 @@ class Waifu2xUpscaler:
         
         # Determine best available backend
         if backend == "auto":
-            if WAIFU2X_NCNN_AVAILABLE:
+            # Check for AMD GPU first if available
+            if AMD_BACKEND_AVAILABLE:
+                amd_availability = test_amd_waifu2x_availability()
+                if amd_availability.get('amd_backend_available', False):
+                    self.backend = "amd"
+                    logger.info("Auto-selected AMD backend")
+                else:
+                    # Fall back to other backends
+                    if WAIFU2X_NCNN_AVAILABLE:
+                        self.backend = "ncnn"
+                    elif WAIFU2X_CHAINER_AVAILABLE:
+                        self.backend = "chainer"
+                    elif MOCK_WAIFU2X_AVAILABLE:
+                        self.backend = "mock"
+                    else:
+                        logger.error("No waifu2x backend available")
+                        return
+            elif WAIFU2X_NCNN_AVAILABLE:
                 self.backend = "ncnn"
             elif WAIFU2X_CHAINER_AVAILABLE:
                 self.backend = "chainer"
@@ -85,7 +113,9 @@ class Waifu2xUpscaler:
     def _initialize_backend(self):
         """Initialize the selected backend"""
         try:
-            if self.backend == "ncnn" and WAIFU2X_NCNN_AVAILABLE:
+            if self.backend == "amd" and AMD_BACKEND_AVAILABLE:
+                self._initialize_amd()
+            elif self.backend == "ncnn" and WAIFU2X_NCNN_AVAILABLE:
                 self._initialize_ncnn()
             elif self.backend == "chainer" and WAIFU2X_CHAINER_AVAILABLE:
                 self._initialize_chainer()
@@ -123,6 +153,21 @@ class Waifu2xUpscaler:
         logger.warning("Chainer backend not fully implemented yet")
         raise NotImplementedError("Chainer backend not implemented")
     
+    def _initialize_amd(self):
+        """Initialize AMD GPU backend"""
+        try:
+            self._processor = AMDWaifu2xBackend(
+                backend_type="auto",
+                device_id=self.gpu_id,
+                scale=self.scale,
+                noise=self.noise,
+                model=self.model
+            )
+            logger.info(f"AMD backend initialized - GPU: {self.gpu_id}, Scale: {self.scale}x, Noise: {self.noise}")
+        except Exception as e:
+            logger.error(f"Failed to initialize AMD backend: {e}")
+            raise
+    
     def _initialize_mock(self):
         """Initialize mock backend"""
         try:
@@ -157,7 +202,9 @@ class Waifu2xUpscaler:
             return None
             
         try:
-            if self.backend == "ncnn":
+            if self.backend == "amd":
+                return self._upscale_amd(image)
+            elif self.backend == "ncnn":
                 return self._upscale_ncnn(image)
             elif self.backend == "chainer":
                 return self._upscale_chainer(image)
@@ -200,6 +247,14 @@ class Waifu2xUpscaler:
         """Upscale using chainer backend"""
         # Placeholder for chainer implementation
         raise NotImplementedError("Chainer backend not implemented")
+    
+    def _upscale_amd(self, image: Image.Image) -> Optional[Image.Image]:
+        """Upscale using AMD GPU backend"""
+        try:
+            return self._processor.upscale_image(image)
+        except Exception as e:
+            logger.error(f"AMD upscaling failed: {e}")
+            return None
     
     def _upscale_mock(self, image: Image.Image) -> Optional[Image.Image]:
         """Upscale using mock backend"""
@@ -338,11 +393,20 @@ def create_waifu2x_upscaler(**kwargs) -> Waifu2xUpscaler:
 
 def test_waifu2x_availability() -> Dict[str, bool]:
     """Test waifu2x backend availability"""
+    amd_available = False
+    if AMD_BACKEND_AVAILABLE:
+        try:
+            amd_info = test_amd_waifu2x_availability()
+            amd_available = amd_info.get('amd_backend_available', False)
+        except Exception:
+            amd_available = False
+    
     return {
+        "amd": amd_available,
         "ncnn": WAIFU2X_NCNN_AVAILABLE,
         "chainer": WAIFU2X_CHAINER_AVAILABLE,
         "mock": MOCK_WAIFU2X_AVAILABLE,
-        "any_available": WAIFU2X_NCNN_AVAILABLE or WAIFU2X_CHAINER_AVAILABLE or MOCK_WAIFU2X_AVAILABLE
+        "any_available": amd_available or WAIFU2X_NCNN_AVAILABLE or WAIFU2X_CHAINER_AVAILABLE or MOCK_WAIFU2X_AVAILABLE
     }
 
 

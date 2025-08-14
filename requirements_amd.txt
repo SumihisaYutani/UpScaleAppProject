@@ -1,0 +1,29 @@
+# AMD GPU Dependencies for Waifu2x
+# These are the dependencies needed for AMD GPU-accelerated waifu2x functionality
+
+# Core dependencies
+Pillow>=10.0.1
+numpy>=1.24.3
+requests>=2.28.0
+
+# AMD ROCm PyTorch (for ROCm backend)
+# Install with: pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/rocm6.0
+# torch>=2.0.0+rocm
+# torchvision>=0.15.0+rocm
+# torchaudio>=2.0.0+rocm
+
+# Vulkan support for AMD GPUs
+# Note: waifu2x-ncnn-vulkan-python may need to be installed separately or built from source
+# waifu2x-ncnn-vulkan-python>=1.0.0
+
+# Optional: OpenCL for GPU detection
+# pyopencl>=2023.1.1
+
+# Development and testing
+# pytest>=7.4.0
+# requests>=2.28.0  # For downloading waifu2x-ncnn-vulkan
+
+# Note: For best AMD GPU performance, also install:
+# 1. AMD GPU drivers with Vulkan support
+# 2. ROCm (for PyTorch backend) - see https://rocmdocs.amd.com/
+# 3. Vulkan SDK - see https://vulkan.lunarg.com/

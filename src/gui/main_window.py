@@ -298,7 +298,19 @@ class MainWindow:
         # AI Model
         ctk.CTkLabel(settings_grid, text="AI Model:").grid(row=1, column=0, padx=10, pady=10, sticky="w")
         ai_available = ENVIRONMENT_STATUS.get("ai_available", False)
-        ai_options = ["Enhanced AI", "Basic AI", "Simple"] if ai_available else ["Simple Only"]
+        waifu2x_amd_available = ENVIRONMENT_STATUS.get("waifu2x_amd_available", False)
+        
+        ai_options = []
+        if ai_available:
+            ai_options.extend(["Enhanced AI", "Basic AI"])
+        if waifu2x_amd_available:
+            ai_options.append("Waifu2x AMD GPU")
+        if ENVIRONMENT_STATUS.get("waifu2x_available", False):
+            ai_options.append("Waifu2x")
+        if not ai_options:
+            ai_options = ["Simple Only"]
+        if "Simple" not in ai_options:
+            ai_options.append("Simple")
         self.ai_var = ctk.StringVar(value=ai_options[0])
         ai_menu = ctk.CTkComboBox(
             settings_grid,
@@ -414,8 +426,15 @@ class MainWindow:
     def _initialize_backend(self):
         """Initialize backend application"""
         try:
-            use_ai = self.ai_var.get() != "Simple Only"
-            use_enhanced = "Enhanced" in self.ai_var.get()
+            ai_selection = self.ai_var.get()
+            use_ai = ai_selection not in ["Simple Only", "Simple"]
+            use_enhanced = "Enhanced" in ai_selection
+            use_waifu2x_amd = "Waifu2x AMD GPU" in ai_selection
+            
+            # Configure waifu2x backend if AMD GPU selected
+            if use_waifu2x_amd:
+                from config.settings import WAIFU2X_SETTINGS
+                WAIFU2X_SETTINGS["backend"] = "amd"
             
             self.app = EnhancedUpScaleApp(
                 use_ai=use_ai,
@@ -628,16 +647,43 @@ class MainWindow:
         try:
             system_info = self.app.get_system_info_enhanced()
             
+            # Get AMD GPU information
+            try:
+                from modules.amd_gpu_detector import get_amd_gpu_info
+                amd_info = get_amd_gpu_info()
+            except:
+                amd_info = {'amd_gpus_found': 0, 'amd_gpus': []}
+            
             status_text = f"""🖥️ System Information:
 • Platform: {system_info.get('platform', 'Unknown')}
 • Python: {system_info.get('python_version', 'Unknown')}
 • CUDA Available: {'Yes' if system_info.get('cuda_available') else 'No'}
 """
             
+            # Add GPU information
             if system_info.get('cuda_available'):
-                status_text += f"• GPU: {system_info.get('cuda_device_name', 'Unknown')}\n"
+                status_text += f"• NVIDIA GPU: {system_info.get('cuda_device_name', 'Unknown')}\n"
+            
+            if amd_info.get('amd_gpus_found', 0) > 0:
+                amd_gpu = amd_info['amd_gpus'][0]
+                status_text += f"• AMD GPU: {amd_gpu.get('name', 'Unknown')} ({amd_gpu.get('memory', 0) // 1024**3}GB)\n"
                 
-            status_text += f"• Enhanced AI: {'Available' if system_info.get('enhanced_ai_enabled') else 'Not Available'}"
+            # Enhanced AI status
+            enhanced_ai_available = system_info.get('enhanced_ai_enabled')
+            waifu2x_available = ENVIRONMENT_STATUS.get("waifu2x_available", False)
+            amd_waifu2x_available = ENVIRONMENT_STATUS.get("waifu2x_amd_available", False)
+            
+            if enhanced_ai_available:
+                status_text += "• Enhanced AI: Available\n"
+            elif amd_waifu2x_available:
+                status_text += "• AMD GPU AI: Available\n"
+            elif waifu2x_available:
+                status_text += "• Waifu2x AI: Available\n"
+            else:
+                status_text += "• Enhanced AI: Not Available\n"
+            
+            # Remove trailing newline
+            status_text = status_text.rstrip()
             
             self.status_text.configure(state="normal")
             self.status_text.delete("0.0", "end")
