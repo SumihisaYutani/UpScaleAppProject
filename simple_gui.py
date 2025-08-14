@@ -10,6 +10,9 @@ import logging
 from pathlib import Path
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
+import threading
+import subprocess
+import signal
 
 # Add src to path
 src_path = str(Path(__file__).parent / "src")
@@ -68,6 +71,11 @@ class SimpleUpScaleGUI:
         
         self.ffmpeg_path = self._find_ffmpeg()
         self.logger.info(f"FFmpeg path: {self.ffmpeg_path}")
+        
+        # Process management
+        self.current_process = None
+        self.processing = False
+        self.cancel_requested = False
         
         self._setup_window()
         self._setup_ui()
@@ -279,6 +287,18 @@ class SimpleUpScaleGUI:
             hover_color="darkgreen"
         )
         self.process_button.pack(side="left", padx=10, pady=10, fill="x", expand=True)
+        
+        # Cancel button
+        self.cancel_button = ctk.CTkButton(
+            button_container,
+            text="Cancel",
+            command=self._cancel_processing,
+            height=35,
+            state="disabled",
+            fg_color="red",
+            hover_color="darkred"
+        )
+        self.cancel_button.pack(side="left", padx=5, pady=10, fill="x", expand=True)
         
         self.test_button = ctk.CTkButton(
             button_container,
@@ -583,10 +603,15 @@ Note: Requires Vulkan-compatible GPU"""
             )
             return
         
+        # Reset cancel flag and set processing state
+        self.cancel_requested = False
+        self.processing = True
+        
         try:
-            # Disable buttons during processing
+            # Disable/enable appropriate buttons during processing
             self.process_button.configure(state="disabled")
             self.analyze_button.configure(state="disabled")
+            self.cancel_button.configure(state="normal")
             
             # Update status
             self.status_text.delete("0.0", "end")
@@ -682,9 +707,14 @@ Note: Requires Vulkan-compatible GPU"""
                 icon="cancel"
             )
         finally:
+            # Reset processing state
+            self.processing = False
+            self.current_process = None
+            
             # Re-enable buttons
             self.process_button.configure(state="normal")
             self.analyze_button.configure(state="normal")
+            self.cancel_button.configure(state="disabled")
             self.logger.info("=== Processing session ended ===")
     
     def _process_video_with_progress(self, input_path, output_path, upscaler, scale_factor):
@@ -710,6 +740,9 @@ Note: Requires Vulkan-compatible GPU"""
             
             frame_files = []
             for i in range(total_frames):
+                # Check for cancellation
+                self._check_cancel_requested()
+                
                 ret, frame = cap.read()
                 if not ret:
                     break
@@ -870,8 +903,6 @@ Please check:
     def _add_audio_to_video(self, video_path, output_path):
         """Add audio from original video to processed video"""
         try:
-            import subprocess
-            
             original_video = self.input_entry.get().strip()
             
             if self.ffmpeg_path and original_video:
@@ -889,12 +920,25 @@ Please check:
                     output_path
                 ]
                 
-                result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+                # Start process with proper management
+                self.current_process = subprocess.Popen(
+                    cmd, 
+                    stdout=subprocess.PIPE, 
+                    stderr=subprocess.PIPE,
+                    text=True
+                )
                 
-                if result.returncode != 0:
-                    # If audio addition fails, just copy the video-only file
-                    import shutil
-                    shutil.copy2(video_path, output_path)
+                try:
+                    stdout, stderr = self.current_process.communicate(timeout=300)
+                    
+                    if self.current_process.returncode != 0:
+                        # If audio addition fails, just copy the video-only file
+                        import shutil
+                        shutil.copy2(video_path, output_path)
+                        
+                except subprocess.TimeoutExpired:
+                    self._kill_current_process()
+                    raise Exception("FFmpeg audio processing timeout")
                     
                 # Update progress
                 self.progress_bar.set(0.95)
@@ -904,6 +948,8 @@ Please check:
             # If audio addition fails, just copy the video-only file
             import shutil
             shutil.copy2(video_path, output_path)
+        finally:
+            self.current_process = None
     
     def _simple_video_processing(self, input_path, scale_factor):
         """Simple video processing fallback"""
@@ -935,6 +981,9 @@ Please check:
             processed_frames = []
             
             for i in range(total_frames):
+                # Check for cancellation
+                self._check_cancel_requested()
+                
                 ret, frame = cap.read()
                 if not ret:
                     break
@@ -1032,9 +1081,79 @@ Please check:
                 icon="cancel"
             )
         finally:
+            # Reset processing state
+            self.processing = False
+            
             # Re-enable buttons
             self.process_button.configure(state="normal")
             self.analyze_button.configure(state="normal")
+            self.cancel_button.configure(state="disabled")
+    
+    def _cancel_processing(self):
+        """Cancel current processing operation"""
+        if not self.processing:
+            return
+            
+        self.cancel_requested = True
+        self.logger.info("Cancel requested by user")
+        
+        # Update UI
+        self.progress_label.configure(text="Progress: Cancelling...")
+        self.status_text.delete("0.0", "end")
+        self.status_text.insert("0.0", "Cancelling processing...")
+        self.root.update()
+        
+        # Kill current process if exists
+        self._kill_current_process()
+        
+        # Show completion message
+        CTkMessagebox(
+            title="Processing Cancelled",
+            message="Video processing has been cancelled.",
+            icon="info"
+        )
+        
+        # Reset UI
+        self.progress_bar.set(0)
+        self.progress_label.configure(text="Progress: Cancelled")
+        self.status_text.delete("0.0", "end")
+        self.status_text.insert("0.0", "Processing cancelled by user.")
+    
+    def _kill_current_process(self):
+        """Kill the current subprocess if it exists"""
+        if self.current_process is None:
+            return
+            
+        try:
+            if self.current_process.poll() is None:  # Process is still running
+                self.logger.info(f"Terminating process PID: {self.current_process.pid}")
+                
+                if os.name == 'nt':  # Windows
+                    # Use taskkill to terminate the entire process tree
+                    subprocess.run([
+                        "taskkill", "/F", "/T", "/PID", str(self.current_process.pid)
+                    ], capture_output=True)
+                else:  # Unix-like
+                    # Send SIGTERM first, then SIGKILL if necessary
+                    self.current_process.terminate()
+                    try:
+                        self.current_process.wait(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        self.current_process.kill()
+                        self.current_process.wait()
+                
+                self.logger.info("Process terminated successfully")
+                
+        except Exception as e:
+            self.logger.error(f"Error terminating process: {e}")
+        finally:
+            self.current_process = None
+    
+    def _check_cancel_requested(self):
+        """Check if cancellation was requested and handle it"""
+        if self.cancel_requested:
+            self._kill_current_process()
+            raise Exception("Processing cancelled by user")
             
     def run(self):
         """Run the GUI application"""

@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 class VideoBuilder:
     """
     Video Builder for combining processed frames back into video
-    Supports audio preservation and various output formats
+    Supports audio preservation and various output formats with cancellation support
     """
     
     def __init__(self, output_dir: Optional[str] = None):
@@ -27,6 +27,10 @@ class VideoBuilder:
         """
         self.output_dir = Path(output_dir) if output_dir else Path("output")
         self.output_dir.mkdir(exist_ok=True)
+        
+        # Process management
+        self.current_process = None
+        self.cancel_requested = False
         
         # Check for FFmpeg
         self._check_ffmpeg()
@@ -90,13 +94,28 @@ class VideoBuilder:
                     original_video_path if preserve_audio else None
                 )
                 
-                # Execute FFmpeg
-                result = subprocess.run(
-                    cmd, 
-                    capture_output=True, 
-                    text=True,
-                    check=True
+                # Execute FFmpeg with cancellation support
+                self.current_process = subprocess.Popen(
+                    cmd,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True
                 )
+                
+                try:
+                    stdout, stderr = self.current_process.communicate()
+                    
+                    if self.current_process.returncode != 0:
+                        raise subprocess.CalledProcessError(
+                            self.current_process.returncode, cmd, stderr
+                        )
+                except Exception as e:
+                    if self.cancel_requested:
+                        self._kill_current_process()
+                        raise Exception("Video building cancelled")
+                    raise e
+                finally:
+                    self.current_process = None
                 
                 logger.info(f"Successfully created video: {output_path}")
                 return True
@@ -183,9 +202,22 @@ class VideoBuilder:
                 output_path
             ]
             
-            subprocess.run(cmd, capture_output=True, text=True, check=True)
-            logger.info(f"Audio extracted to: {output_path}")
-            return True
+            self.current_process = subprocess.Popen(
+                cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
+            )
+            
+            try:
+                stdout, stderr = self.current_process.communicate()
+                
+                if self.current_process.returncode != 0:
+                    raise subprocess.CalledProcessError(
+                        self.current_process.returncode, cmd, stderr
+                    )
+                    
+                logger.info(f"Audio extracted to: {output_path}")
+                return True
+            finally:
+                self.current_process = None
             
         except subprocess.CalledProcessError as e:
             logger.error(f"Audio extraction failed: {e.stderr}")
@@ -277,10 +309,63 @@ class VideoBuilder:
                 output_path
             ]
             
-            subprocess.run(cmd, capture_output=True, text=True, check=True)
-            logger.info(f"Test video created: {output_path}")
-            return True
+            self.current_process = subprocess.Popen(
+                cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
+            )
+            
+            try:
+                stdout, stderr = self.current_process.communicate()
+                
+                if self.current_process.returncode != 0:
+                    raise subprocess.CalledProcessError(
+                        self.current_process.returncode, cmd, stderr
+                    )
+                    
+                logger.info(f"Test video created: {output_path}")
+                return True
+            finally:
+                self.current_process = None
             
         except Exception as e:
             logger.error(f"Test video creation failed: {e}")
             return False
+    
+    def cancel_processing(self):
+        """Request cancellation of current processing"""
+        self.cancel_requested = True
+        self._kill_current_process()
+    
+    def _kill_current_process(self):
+        """Kill the current subprocess if it exists"""
+        if self.current_process is None:
+            return
+            
+        try:
+            if self.current_process.poll() is None:  # Process is still running
+                logger.info(f"Terminating FFmpeg process PID: {self.current_process.pid}")
+                
+                import os
+                if os.name == 'nt':  # Windows
+                    # Use taskkill to terminate the entire process tree
+                    subprocess.run([
+                        "taskkill", "/F", "/T", "/PID", str(self.current_process.pid)
+                    ], capture_output=True)
+                else:  # Unix-like
+                    # Send SIGTERM first, then SIGKILL if necessary
+                    self.current_process.terminate()
+                    try:
+                        self.current_process.wait(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        self.current_process.kill()
+                        self.current_process.wait()
+                
+                logger.info("FFmpeg process terminated successfully")
+                
+        except Exception as e:
+            logger.error(f"Error terminating FFmpeg process: {e}")
+        finally:
+            self.current_process = None
+    
+    def reset_cancel_flag(self):
+        """Reset the cancellation flag for new operations"""
+        self.cancel_requested = False
