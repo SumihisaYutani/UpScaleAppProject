@@ -16,6 +16,17 @@ try:
 except ImportError:
     WAIFU2X_CHAINER_AVAILABLE = False
 
+# Import mock implementation as fallback
+try:
+    from .mock_waifu2x import MockWaifu2xUpscaler, test_mock_waifu2x_availability
+    MOCK_WAIFU2X_AVAILABLE = True
+except ImportError:
+    try:
+        from src.modules.mock_waifu2x import MockWaifu2xUpscaler, test_mock_waifu2x_availability
+        MOCK_WAIFU2X_AVAILABLE = True
+    except ImportError:
+        MOCK_WAIFU2X_AVAILABLE = False
+
 import logging
 from PIL import Image
 import numpy as np
@@ -63,6 +74,8 @@ class Waifu2xUpscaler:
                 self.backend = "ncnn"
             elif WAIFU2X_CHAINER_AVAILABLE:
                 self.backend = "chainer"
+            elif MOCK_WAIFU2X_AVAILABLE:
+                self.backend = "mock"
             else:
                 logger.error("No waifu2x backend available")
                 return
@@ -76,6 +89,8 @@ class Waifu2xUpscaler:
                 self._initialize_ncnn()
             elif self.backend == "chainer" and WAIFU2X_CHAINER_AVAILABLE:
                 self._initialize_chainer()
+            elif self.backend == "mock" and MOCK_WAIFU2X_AVAILABLE:
+                self._initialize_mock()
             else:
                 logger.error(f"Backend {self.backend} not available")
                 return
@@ -108,6 +123,21 @@ class Waifu2xUpscaler:
         logger.warning("Chainer backend not fully implemented yet")
         raise NotImplementedError("Chainer backend not implemented")
     
+    def _initialize_mock(self):
+        """Initialize mock backend"""
+        try:
+            self._processor = MockWaifu2xUpscaler(
+                backend="mock",
+                gpu_id=self.gpu_id,
+                scale=self.scale,
+                noise=self.noise,
+                model=self.model
+            )
+            logger.info(f"Mock backend initialized - Scale: {self.scale}x, Noise: {self.noise}")
+        except Exception as e:
+            logger.error(f"Failed to initialize mock backend: {e}")
+            raise
+    
     def is_available(self) -> bool:
         """Check if waifu2x is available"""
         return self._available
@@ -131,6 +161,8 @@ class Waifu2xUpscaler:
                 return self._upscale_ncnn(image)
             elif self.backend == "chainer":
                 return self._upscale_chainer(image)
+            elif self.backend == "mock":
+                return self._upscale_mock(image)
             else:
                 logger.error(f"Unknown backend: {self.backend}")
                 return None
@@ -168,6 +200,14 @@ class Waifu2xUpscaler:
         """Upscale using chainer backend"""
         # Placeholder for chainer implementation
         raise NotImplementedError("Chainer backend not implemented")
+    
+    def _upscale_mock(self, image: Image.Image) -> Optional[Image.Image]:
+        """Upscale using mock backend"""
+        try:
+            return self._processor.upscale_image(image)
+        except Exception as e:
+            logger.error(f"Mock upscaling failed: {e}")
+            return None
     
     def upscale_frames(self, 
                       frame_files: List[str], 
@@ -301,7 +341,8 @@ def test_waifu2x_availability() -> Dict[str, bool]:
     return {
         "ncnn": WAIFU2X_NCNN_AVAILABLE,
         "chainer": WAIFU2X_CHAINER_AVAILABLE,
-        "any_available": WAIFU2X_NCNN_AVAILABLE or WAIFU2X_CHAINER_AVAILABLE
+        "mock": MOCK_WAIFU2X_AVAILABLE,
+        "any_available": WAIFU2X_NCNN_AVAILABLE or WAIFU2X_CHAINER_AVAILABLE or MOCK_WAIFU2X_AVAILABLE
     }
 
 

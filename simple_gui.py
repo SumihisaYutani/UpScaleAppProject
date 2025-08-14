@@ -6,12 +6,15 @@ For testing GUI functionality without heavy ML dependencies
 
 import sys
 import os
+import logging
 from pathlib import Path
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
 # Add src to path
-sys.path.append(str(Path(__file__).parent / "src"))
+src_path = str(Path(__file__).parent / "src")
+sys.path.insert(0, src_path)
+sys.path.insert(0, str(Path(__file__).parent))
 
 try:
     import customtkinter as ctk
@@ -26,6 +29,32 @@ if GUI_AVAILABLE:
     ctk.set_appearance_mode("dark")
     ctk.set_default_color_theme("blue")
 
+# Setup logging
+def setup_logging():
+    """Setup logging configuration"""
+    log_dir = Path("logs")
+    log_dir.mkdir(exist_ok=True)
+    
+    log_file = log_dir / "gui_debug.log"
+    
+    # Configure logging
+    logging.basicConfig(
+        level=logging.DEBUG,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+        handlers=[
+            logging.FileHandler(log_file, encoding='utf-8'),
+            logging.StreamHandler(sys.stdout)
+        ]
+    )
+    
+    logger = logging.getLogger(__name__)
+    logger.info("=== GUI Debug Session Started ===")
+    logger.info(f"Log file: {log_file}")
+    return logger
+
+# Initialize logger
+logger = setup_logging()
+
 
 class SimpleUpScaleGUI:
     """Simple GUI for UpScale App without AI dependencies"""
@@ -34,8 +63,41 @@ class SimpleUpScaleGUI:
         if not GUI_AVAILABLE:
             raise ImportError("GUI dependencies not available")
         
+        self.logger = logging.getLogger(self.__class__.__name__)
+        self.logger.info("Initializing GUI...")
+        
+        self.ffmpeg_path = self._find_ffmpeg()
+        self.logger.info(f"FFmpeg path: {self.ffmpeg_path}")
+        
         self._setup_window()
         self._setup_ui()
+        
+        self.logger.info("GUI initialization complete")
+    
+    def _find_ffmpeg(self):
+        """Find FFmpeg executable"""
+        import subprocess
+        
+        ffmpeg_paths = [
+            "ffmpeg",
+            r"C:\ffmpeg\bin\ffmpeg.exe",
+            r"C:\ffmpeg\ffmpeg.exe",
+            "ffmpeg.exe"
+        ]
+        
+        for ffmpeg_path in ffmpeg_paths:
+            try:
+                result = subprocess.run(
+                    [ffmpeg_path, "-version"], 
+                    capture_output=True, 
+                    text=True, 
+                    timeout=5
+                )
+                if result.returncode == 0:
+                    return ffmpeg_path
+            except:
+                continue
+        return None
         
     def _setup_window(self):
         """Setup main window"""
@@ -206,6 +268,18 @@ class SimpleUpScaleGUI:
         )
         self.analyze_button.pack(side="left", padx=10, pady=10, fill="x", expand=True)
         
+        # Process button
+        self.process_button = ctk.CTkButton(
+            button_container,
+            text="Start Processing",
+            command=self._start_processing,
+            height=35,
+            state="disabled",
+            fg_color="green",
+            hover_color="darkgreen"
+        )
+        self.process_button.pack(side="left", padx=10, pady=10, fill="x", expand=True)
+        
         self.test_button = ctk.CTkButton(
             button_container,
             text="Test FFmpeg",
@@ -243,6 +317,17 @@ class SimpleUpScaleGUI:
         status_label = ctk.CTkLabel(status_frame, text="Status", font=ctk.CTkFont(size=16, weight="bold"))
         status_label.pack(anchor="w", padx=15, pady=(15, 10))
         
+        # Progress bar
+        self.progress_frame = ctk.CTkFrame(status_frame)
+        self.progress_frame.pack(fill="x", padx=15, pady=(0, 10))
+        
+        self.progress_label = ctk.CTkLabel(self.progress_frame, text="Progress: Ready")
+        self.progress_label.pack(pady=(10, 5))
+        
+        self.progress_bar = ctk.CTkProgressBar(self.progress_frame)
+        self.progress_bar.pack(fill="x", padx=15, pady=(0, 10))
+        self.progress_bar.set(0)
+        
         # Status display
         self.status_text = ctk.CTkTextbox(status_frame, height=100)
         self.status_text.pack(fill="x", padx=15, pady=(0, 15))
@@ -263,6 +348,7 @@ class SimpleUpScaleGUI:
             self.input_entry.delete(0, "end")
             self.input_entry.insert(0, file_path)
             self.analyze_button.configure(state="normal")
+            self.process_button.configure(state="disabled")  # Reset process button
             
             self.status_text.delete("0.0", "end")
             self.status_text.insert("0.0", f"Selected: {os.path.basename(file_path)}")
@@ -343,6 +429,10 @@ Status: Analysis failed"""
             self.status_text.delete("0.0", "end")
             self.status_text.insert("0.0", info_text)
             
+            # Enable process button if analysis was successful
+            if "Analysis complete" in info_text:
+                self.process_button.configure(state="normal")
+            
         except Exception as e:
             CTkMessagebox(
                 title="Analysis Error",
@@ -352,41 +442,40 @@ Status: Analysis failed"""
             
     def _test_ffmpeg(self):
         """Test FFmpeg availability"""
-        try:
-            import subprocess
-            
-            result = subprocess.run(
-                ["ffmpeg", "-version"], 
-                capture_output=True, 
-                text=True, 
-                timeout=10
-            )
-            
-            if result.returncode == 0:
-                version_line = result.stdout.split('\n')[0]
-                CTkMessagebox(
-                    title="FFmpeg Test",
-                    message=f"FFmpeg is available!\n\n{version_line}",
-                    icon="check"
-                )
-            else:
-                CTkMessagebox(
-                    title="FFmpeg Test",
-                    message="FFmpeg found but returned error",
-                    icon="warning"
+        if self.ffmpeg_path:
+            try:
+                import subprocess
+                result = subprocess.run(
+                    [self.ffmpeg_path, "-version"], 
+                    capture_output=True, 
+                    text=True, 
+                    timeout=10
                 )
                 
-        except FileNotFoundError:
+                if result.returncode == 0:
+                    version_line = result.stdout.split('\n')[0]
+                    CTkMessagebox(
+                        title="FFmpeg Test",
+                        message=f"FFmpeg is available!\n\nPath: {self.ffmpeg_path}\n{version_line}",
+                        icon="check"
+                    )
+                else:
+                    CTkMessagebox(
+                        title="FFmpeg Test",
+                        message="FFmpeg found but returned error",
+                        icon="warning"
+                    )
+            except Exception as e:
+                CTkMessagebox(
+                    title="FFmpeg Test",
+                    message=f"Error testing FFmpeg: {str(e)}",
+                    icon="cancel"
+                )
+        else:
             CTkMessagebox(
                 title="FFmpeg Test",
-                message="FFmpeg not found in PATH.\n\nPlease install FFmpeg to enable video processing.",
-                icon="cancel"
-            )
-        except Exception as e:
-            CTkMessagebox(
-                title="FFmpeg Test",
-                message=f"Error testing FFmpeg: {str(e)}",
-                icon="cancel"
+                message="FFmpeg not found!\n\nNote: Video processing will use OpenCV instead.\nFFmpeg is optional but recommended for advanced features.",
+                icon="warning"
             )
     
     def _test_waifu2x(self):
@@ -394,7 +483,16 @@ Status: Analysis failed"""
         try:
             # Try to import and test waifu2x
             try:
-                from modules.waifu2x_processor import test_waifu2x_availability, Waifu2xUpscaler
+                # Try multiple import paths
+                try:
+                    from src.modules.waifu2x_processor import test_waifu2x_availability, Waifu2xUpscaler
+                except ImportError:
+                    try:
+                        from modules.waifu2x_processor import test_waifu2x_availability, Waifu2xUpscaler
+                    except ImportError:
+                        import sys
+                        sys.path.append('src')
+                        from modules.waifu2x_processor import test_waifu2x_availability, Waifu2xUpscaler
                 
                 availability = test_waifu2x_availability()
                 
@@ -468,6 +566,475 @@ Note: Requires Vulkan-compatible GPU"""
                 message=f"Error testing Waifu2x: {str(e)}",
                 icon="cancel"
             )
+    
+    def _start_processing(self):
+        """Start video processing with Waifu2x"""
+        input_path = self.input_entry.get().strip()
+        
+        self.logger.info(f"=== Starting video processing ===")
+        self.logger.info(f"Input path: {input_path}")
+        
+        if not input_path or not os.path.exists(input_path):
+            self.logger.error(f"Invalid input path: {input_path}")
+            CTkMessagebox(
+                title="Error",
+                message="Please select a valid video file first",
+                icon="cancel"
+            )
+            return
+        
+        try:
+            # Disable buttons during processing
+            self.process_button.configure(state="disabled")
+            self.analyze_button.configure(state="disabled")
+            
+            # Update status
+            self.status_text.delete("0.0", "end")
+            self.status_text.insert("0.0", "Starting video processing...")
+            self.progress_label.configure(text="Progress: Initializing...")
+            self.progress_bar.set(0)
+            self.root.update()
+            
+            # Get settings
+            scale_factor = float(self.scale_var.get().rstrip('x'))
+            mode = self.mode_var.get()
+            
+            self.logger.info(f"Settings - Scale: {scale_factor}, Mode: {mode}")
+            
+            # Import processing modules
+            try:
+                self.logger.info("Attempting to import Waifu2x modules...")
+                
+                # Try multiple import paths for Waifu2x only
+                try:
+                    self.logger.debug("Trying: from src.modules.waifu2x_processor import Waifu2xUpscaler")
+                    from src.modules.waifu2x_processor import Waifu2xUpscaler
+                    self.logger.info("Successfully imported from src.modules.waifu2x_processor")
+                except ImportError as e1:
+                    self.logger.debug(f"First import failed: {e1}")
+                    try:
+                        self.logger.debug("Trying: from modules.waifu2x_processor import Waifu2xUpscaler")
+                        from modules.waifu2x_processor import Waifu2xUpscaler
+                        self.logger.info("Successfully imported from modules.waifu2x_processor")
+                    except ImportError as e2:
+                        self.logger.debug(f"Second import failed: {e2}")
+                        import sys
+                        self.logger.debug(f"Current sys.path: {sys.path}")
+                        sys.path.append('src')
+                        self.logger.debug("Added 'src' to sys.path, trying again...")
+                        from modules.waifu2x_processor import Waifu2xUpscaler
+                        self.logger.info("Successfully imported after adding src to path")
+                
+                # Create output filename
+                input_name = os.path.splitext(os.path.basename(input_path))[0]
+                output_path = f"output/{input_name}_waifu2x_{scale_factor}x.mp4"
+                os.makedirs("output", exist_ok=True)
+                
+                # Initialize processors
+                if "Waifu2x" in mode:
+                    # Get Waifu2x specific settings
+                    noise_level = 1  # Default
+                    model_type = "models-cunet"  # Default
+                    
+                    if hasattr(self, 'noise_var'):
+                        noise_level = int(self.noise_var.get().split()[0])
+                    if hasattr(self, 'model_var'):
+                        model_map = {
+                            "CUNet (Balanced)": "models-cunet",
+                            "Anime Style": "models-upconv_7_anime_style_art_rgb",
+                            "Photo": "models-upconv_7_photo"
+                        }
+                        model_type = model_map.get(self.model_var.get(), "models-cunet")
+                    
+                    upscaler = Waifu2xUpscaler(
+                        scale=int(scale_factor),
+                        noise=noise_level,
+                        model=model_type
+                    )
+                else:
+                    upscaler = None
+                
+                # Process video
+                self._process_video_with_progress(
+                    input_path, output_path, upscaler, scale_factor
+                )
+                
+            except ImportError as e:
+                self.logger.error(f"Failed to import Waifu2x modules: {e}")
+                self.logger.error(f"Full traceback:", exc_info=True)
+                
+                # Fallback: use simple processing without advanced modules
+                self.logger.info("Falling back to simple processing mode")
+                self.status_text.delete("0.0", "end")
+                self.status_text.insert("0.0", f"Import warning: {str(e)}\n\nUsing basic processing mode...")
+                self.root.update()
+                
+                # Simple processing without advanced modules
+                self._simple_video_processing(input_path, scale_factor)
+                
+        except Exception as e:
+            self.logger.error(f"Unexpected error during processing: {e}")
+            self.logger.error(f"Full traceback:", exc_info=True)
+            
+            CTkMessagebox(
+                title="Processing Error",
+                message=f"Failed to start processing: {str(e)}",
+                icon="cancel"
+            )
+        finally:
+            # Re-enable buttons
+            self.process_button.configure(state="normal")
+            self.analyze_button.configure(state="normal")
+            self.logger.info("=== Processing session ended ===")
+    
+    def _process_video_with_progress(self, input_path, output_path, upscaler, scale_factor):
+        """Process video with progress updates"""
+        try:
+            import cv2
+            import threading
+            
+            # Update status
+            self.progress_label.configure(text="Progress: Extracting frames...")
+            self.status_text.delete("0.0", "end")
+            self.status_text.insert("0.0", "Extracting frames from video...")
+            self.root.update()
+            
+            # Extract frames
+            cap = cv2.VideoCapture(input_path)
+            fps = cap.get(cv2.CAP_PROP_FPS)
+            total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+            
+            # Create temp directory
+            temp_dir = "temp/frames"
+            os.makedirs(temp_dir, exist_ok=True)
+            
+            frame_files = []
+            for i in range(total_frames):
+                ret, frame = cap.read()
+                if not ret:
+                    break
+                    
+                frame_path = f"{temp_dir}/frame_{i:06d}.png"
+                cv2.imwrite(frame_path, frame)
+                frame_files.append(frame_path)
+                
+                # Update progress
+                progress = (i + 1) / total_frames * 0.3  # 30% for extraction
+                self.progress_bar.set(progress)
+                self.progress_label.configure(text=f"Progress: Extracting frames... {i+1}/{total_frames}")
+                if i % 10 == 0:  # Update UI every 10 frames
+                    self.root.update()
+            
+            cap.release()
+            
+            # Process frames with Waifu2x
+            self.progress_label.configure(text="Progress: Upscaling frames...")
+            self.status_text.delete("0.0", "end")
+            self.status_text.insert("0.0", f"Upscaling {len(frame_files)} frames with Waifu2x...")
+            self.root.update()
+            
+            upscaled_dir = "temp/upscaled"
+            os.makedirs(upscaled_dir, exist_ok=True)
+            
+            def progress_callback(progress, message):
+                # Update progress bar (30% + 60% for processing)
+                total_progress = 0.3 + (progress / 100) * 0.6
+                self.progress_bar.set(total_progress)
+                self.progress_label.configure(text=f"Progress: {message}")
+                self.root.update()
+            
+            if upscaler:
+                upscaled_files = upscaler.upscale_frames(
+                    frame_files, upscaled_dir, progress_callback
+                )
+            else:
+                # Simple upscaling fallback
+                upscaled_files = []
+                for i, frame_file in enumerate(frame_files):
+                    from PIL import Image
+                    with Image.open(frame_file) as img:
+                        width, height = img.size
+                        new_size = (int(width * scale_factor), int(height * scale_factor))
+                        upscaled = img.resize(new_size, Image.LANCZOS)
+                        
+                        output_file = f"{upscaled_dir}/frame_{i:06d}_upscaled.png"
+                        upscaled.save(output_file)
+                        upscaled_files.append(output_file)
+                    
+                    progress = (i + 1) / len(frame_files) * 100
+                    progress_callback(progress, f"Simple upscaling {i+1}/{len(frame_files)}")
+            
+            # Rebuild video
+            self.progress_label.configure(text="Progress: Rebuilding video...")
+            self.status_text.delete("0.0", "end")
+            self.status_text.insert("0.0", "Rebuilding video from upscaled frames...")
+            self.root.update()
+            
+            if upscaled_files:
+                self._rebuild_video(upscaled_files, output_path, fps)
+                
+                # Complete
+                self.progress_bar.set(1.0)
+                self.progress_label.configure(text="Progress: Complete!")
+                
+                result_text = f"""Processing Complete!
+
+Input: {os.path.basename(input_path)}
+Output: {output_path}
+Scale Factor: {scale_factor}x
+Frames Processed: {len(upscaled_files)}/{len(frame_files)}
+Method: {"Waifu2x (Mock)" if upscaler else "Simple Upscaling"}
+
+Output file saved successfully."""
+                
+                self.status_text.delete("0.0", "end")
+                self.status_text.insert("0.0", result_text)
+                
+                CTkMessagebox(
+                    title="Processing Complete",
+                    message=f"Video processing complete!\n\nOutput saved to: {output_path}",
+                    icon="check"
+                )
+            else:
+                raise Exception("No frames were successfully processed")
+                
+        except Exception as e:
+            self.progress_bar.set(0)
+            self.progress_label.configure(text="Progress: Error occurred")
+            
+            error_text = f"""Processing Failed!
+
+Error: {str(e)}
+
+Please check:
+- Input file is a valid video
+- Sufficient disk space available
+- All dependencies are installed"""
+            
+            self.status_text.delete("0.0", "end")
+            self.status_text.insert("0.0", error_text)
+            
+            CTkMessagebox(
+                title="Processing Error",
+                message=f"Processing failed: {str(e)}",
+                icon="cancel"
+            )
+    
+    def _rebuild_video(self, frame_files, output_path, fps):
+        """Rebuild video from frames"""
+        try:
+            import cv2
+            
+            if not frame_files:
+                raise Exception("No frames to rebuild video")
+            
+            # Get frame dimensions
+            sample_frame = cv2.imread(frame_files[0])
+            height, width, channels = sample_frame.shape
+            
+            # Create temporary video without audio
+            temp_video = output_path.replace('.mp4', '_temp.mp4')
+            
+            # Create video writer
+            fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+            out = cv2.VideoWriter(temp_video, fourcc, fps, (width, height))
+            
+            for i, frame_file in enumerate(frame_files):
+                frame = cv2.imread(frame_file)
+                if frame is not None:
+                    out.write(frame)
+                
+                # Update progress
+                progress = 0.9 + (i + 1) / len(frame_files) * 0.05  # 5% for video
+                self.progress_bar.set(progress)
+                if i % 10 == 0:
+                    self.root.update()
+            
+            out.release()
+            
+            # Try to add audio from original video if FFmpeg is available
+            if self.ffmpeg_path:
+                self._add_audio_to_video(temp_video, output_path)
+                import os
+                os.remove(temp_video)  # Remove temp file
+            else:
+                # Just rename temp to final if no FFmpeg
+                import os
+                if os.path.exists(output_path):
+                    os.remove(output_path)
+                os.rename(temp_video, output_path)
+            
+        except Exception as e:
+            raise Exception(f"Failed to rebuild video: {str(e)}")
+    
+    def _add_audio_to_video(self, video_path, output_path):
+        """Add audio from original video to processed video"""
+        try:
+            import subprocess
+            
+            original_video = self.input_entry.get().strip()
+            
+            if self.ffmpeg_path and original_video:
+                # Use FFmpeg to combine processed video with original audio
+                cmd = [
+                    self.ffmpeg_path,
+                    "-i", video_path,
+                    "-i", original_video,
+                    "-c:v", "copy",
+                    "-c:a", "aac",
+                    "-map", "0:v:0",
+                    "-map", "1:a:0",
+                    "-shortest",
+                    "-y",  # Overwrite output
+                    output_path
+                ]
+                
+                result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+                
+                if result.returncode != 0:
+                    # If audio addition fails, just copy the video-only file
+                    import shutil
+                    shutil.copy2(video_path, output_path)
+                    
+                # Update progress
+                self.progress_bar.set(0.95)
+                self.root.update()
+                
+        except Exception as e:
+            # If audio addition fails, just copy the video-only file
+            import shutil
+            shutil.copy2(video_path, output_path)
+    
+    def _simple_video_processing(self, input_path, scale_factor):
+        """Simple video processing fallback"""
+        try:
+            import cv2
+            import numpy as np
+            from PIL import Image
+            
+            # Create output filename
+            input_name = os.path.splitext(os.path.basename(input_path))[0]
+            output_path = f"output/{input_name}_simple_{scale_factor}x.mp4"
+            os.makedirs("output", exist_ok=True)
+            
+            # Update status
+            self.progress_label.configure(text="Progress: Simple processing mode...")
+            self.status_text.delete("0.0", "end")
+            self.status_text.insert("0.0", "Using simple processing mode...\nExtracting frames...")
+            self.root.update()
+            
+            # Extract and process frames
+            cap = cv2.VideoCapture(input_path)
+            fps = cap.get(cv2.CAP_PROP_FPS)
+            total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+            
+            # Create temp directory
+            temp_dir = "temp/simple_frames"
+            os.makedirs(temp_dir, exist_ok=True)
+            
+            processed_frames = []
+            
+            for i in range(total_frames):
+                ret, frame = cap.read()
+                if not ret:
+                    break
+                
+                # Convert to PIL for upscaling
+                frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                pil_image = Image.fromarray(frame_rgb)
+                
+                # Simple upscaling
+                width, height = pil_image.size
+                new_size = (int(width * scale_factor), int(height * scale_factor))
+                upscaled = pil_image.resize(new_size, Image.LANCZOS)
+                
+                # Convert back to OpenCV format
+                upscaled_np = cv2.cvtColor(np.array(upscaled), cv2.COLOR_RGB2BGR)
+                processed_frames.append(upscaled_np)
+                
+                # Update progress
+                progress = (i + 1) / total_frames * 0.8  # 80% for processing
+                self.progress_bar.set(progress)
+                self.progress_label.configure(text=f"Progress: Processing frame {i+1}/{total_frames}")
+                
+                if i % 10 == 0:
+                    self.root.update()
+            
+            cap.release()
+            
+            # Create output video
+            if processed_frames:
+                self.progress_label.configure(text="Progress: Creating output video...")
+                self.status_text.delete("0.0", "end")
+                self.status_text.insert("0.0", "Creating output video...")
+                self.root.update()
+                
+                height, width, channels = processed_frames[0].shape
+                fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+                out = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
+                
+                for i, frame in enumerate(processed_frames):
+                    out.write(frame)
+                    
+                    # Update progress
+                    progress = 0.8 + (i + 1) / len(processed_frames) * 0.2  # Final 20%
+                    self.progress_bar.set(progress)
+                    
+                    if i % 10 == 0:
+                        self.root.update()
+                
+                out.release()
+                
+                # Complete
+                self.progress_bar.set(1.0)
+                self.progress_label.configure(text="Progress: Complete!")
+                
+                result_text = f"""Simple Processing Complete!
+
+Input: {os.path.basename(input_path)}
+Output: {output_path}
+Scale Factor: {scale_factor}x
+Frames Processed: {len(processed_frames)}
+Method: Simple LANCZOS Upscaling
+
+Output file saved successfully."""
+                
+                self.status_text.delete("0.0", "end")
+                self.status_text.insert("0.0", result_text)
+                
+                CTkMessagebox(
+                    title="Processing Complete",
+                    message=f"Simple video processing complete!\n\nOutput saved to: {output_path}",
+                    icon="check"
+                )
+            else:
+                raise Exception("No frames were processed")
+                
+        except Exception as e:
+            self.progress_bar.set(0)
+            self.progress_label.configure(text="Progress: Error occurred")
+            
+            error_text = f"""Simple Processing Failed!
+
+Error: {str(e)}
+
+Please check:
+- Input file is a valid video
+- OpenCV is installed properly
+- Sufficient disk space available"""
+            
+            self.status_text.delete("0.0", "end")
+            self.status_text.insert("0.0", error_text)
+            
+            CTkMessagebox(
+                title="Processing Error",
+                message=f"Simple processing failed: {str(e)}",
+                icon="cancel"
+            )
+        finally:
+            # Re-enable buttons
+            self.process_button.configure(state="normal")
+            self.analyze_button.configure(state="normal")
             
     def run(self):
         """Run the GUI application"""

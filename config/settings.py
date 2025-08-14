@@ -120,6 +120,19 @@ try:
 except ImportError:
     pass
 
+# Check mock waifu2x availability
+try:
+    from src.modules.mock_waifu2x import MockWaifu2xUpscaler
+    DEPENDENCIES["waifu2x_mock"] = True
+except ImportError:
+    try:
+        import sys
+        sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'src'))
+        from modules.mock_waifu2x import MockWaifu2xUpscaler
+        DEPENDENCIES["waifu2x_mock"] = True
+    except ImportError:
+        DEPENDENCIES["waifu2x_mock"] = False
+
 # Adjust AI settings based on available dependencies
 if not DEPENDENCIES["torch"] or not DEPENDENCIES["diffusers"]:
     AI_SETTINGS["device"] = "cpu"
@@ -135,12 +148,13 @@ for name, path in PATHS.items():
 # Environment status
 ENVIRONMENT_STATUS = {
     "ai_available": DEPENDENCIES["torch"] and DEPENDENCIES["diffusers"],
-    "waifu2x_available": DEPENDENCIES["waifu2x_ncnn"] or DEPENDENCIES["waifu2x_chainer"],
+    "waifu2x_available": DEPENDENCIES["waifu2x_ncnn"] or DEPENDENCIES["waifu2x_chainer"] or DEPENDENCIES["waifu2x_mock"],
     "waifu2x_ncnn_available": DEPENDENCIES["waifu2x_ncnn"],
     "waifu2x_chainer_available": DEPENDENCIES["waifu2x_chainer"],
+    "waifu2x_mock_available": DEPENDENCIES["waifu2x_mock"],
     "video_processing_available": DEPENDENCIES["cv2"] and DEPENDENCIES["ffmpeg"],
     "basic_functionality_available": DEPENDENCIES["PIL"] and DEPENDENCIES["numpy"],
     "any_ai_available": (DEPENDENCIES["torch"] and DEPENDENCIES["diffusers"]) or 
-                       DEPENDENCIES["waifu2x_ncnn"] or DEPENDENCIES["waifu2x_chainer"],
+                       DEPENDENCIES["waifu2x_ncnn"] or DEPENDENCIES["waifu2x_chainer"] or DEPENDENCIES["waifu2x_mock"],
     "dependencies": DEPENDENCIES
 }
