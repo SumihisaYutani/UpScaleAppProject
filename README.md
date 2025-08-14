@@ -5,13 +5,15 @@
 ## 🌟 特徴
 
 - **複数のAI手法対応**: Waifu2x（高速・高品質）、Stable Diffusion（カスタマイズ可能）
+- **AMD GPU完全対応**: Radeon GPU向けwaifu2x最適化（ROCm/Vulkanバックエンド）
 - **Waifu2x統合**: 専用AI手法による超高画質アップスケーリング
 - **対応フォーマット**: MP4ファイル（H.264, H.265/HEVC, AVC対応）
 - **多段階スケーリング**: 1x, 2x, 4x, 8x, 16x, 32x まで対応（Waifu2x）
 - **ノイズ除去**: 4段階のノイズリダクション機能
 - **バッチ処理**: フレーム単位での効率的な処理
 - **GUI & CLI**: グラフィカルユーザーインターフェース＋コマンドライン版
-- **GPU加速**: CUDA・Vulkan対応でより高速な処理
+- **GPU加速**: NVIDIA CUDA・AMD Vulkan・Intel対応でより高速な処理
+- **自動GPU検出**: AMD/NVIDIA GPUの自動検出と最適バックエンド選択
 - **軽量版対応**: AI依存関係なしでの基本機能利用
 
 ## 🚀 インストール
@@ -19,8 +21,9 @@
 ### 前提条件
 - Python 3.8以降
 - FFmpeg（システムにインストール済みである必要があります）
-- 推奨: Vulkan対応GPU（Waifu2x用）
+- 推奨: AMD GPU（Radeon RX Vega以降、Vulkan対応）
 - 推奨: NVIDIA GPU（CUDA対応、Stable Diffusion用）
+- または: 統合GPU（Intel/AMD）
 
 ### 🎯 クイックスタート
 
@@ -35,6 +38,12 @@ pip install -r requirements_gui.txt
 
 # Waifu2x高画質機能を追加（推奨）
 pip install -r requirements_waifu2x.txt
+
+# AMD GPU用依存関係を追加（AMD GPU使用時）
+pip install -r requirements_amd.txt
+
+# AMD GPU環境のセットアップとテスト
+python setup_amd_gpu.py
 
 # 軽量GUI版を起動（基本機能＋Waifu2x）
 python simple_gui.py
@@ -65,11 +74,17 @@ pip install -r requirements_gui.txt
 # Waifu2x高画質機能を追加
 pip install -r requirements_waifu2x.txt
 
+# AMD GPU対応を追加（AMD GPU使用時）
+pip install -r requirements_amd.txt
+
 # 全AI機能を使用する場合
 pip install -r requirements.txt
 
 # 環境テスト
 python test_environment.py
+
+# AMD GPU環境テスト
+python setup_amd_gpu.py
 ```
 
 ### ⚠️ トラブルシューティング
@@ -126,7 +141,8 @@ python simple_gui.py
 python main_gui.py
 ```
 - Waifu2x + Stable Diffusion 統合
-- 自動最適手法選択
+- AMD GPU対応 ("Waifu2x AMD GPU" 選択可能)
+- 自動最適手法選択とGPU検出
 - リアルタイム進捗表示
 - GPU/CPU 使用状況監視
 - 高度な設定オプション
@@ -195,6 +211,9 @@ UpScaleAppProject/
 │   │   ├── video_builder.py       # 動画再構築
 │   │   ├── ai_processor.py        # 統合AI処理
 │   │   ├── waifu2x_processor.py   # Waifu2x高画質処理
+│   │   ├── amd_gpu_detector.py    # AMD GPU検出
+│   │   ├── amd_vulkan_waifu2x.py  # AMD Vulkan最適化
+│   │   ├── amd_waifu2x_backend.py # AMD waifu2xバックエンド
 │   │   ├── enhanced_ai_processor.py  # 拡張AI処理
 │   │   └── performance_monitor.py   # パフォーマンス監視
 │   ├── gui/
@@ -211,6 +230,8 @@ UpScaleAppProject/
 ├── requirements.txt                # Python依存関係（フル版）
 ├── requirements_gui.txt            # GUI依存関係（軽量版）
 ├── requirements_waifu2x.txt        # Waifu2x依存関係
+├── requirements_amd.txt            # AMD GPU依存関係
+├── setup_amd_gpu.py                # AMD GPU環境セットアップ
 ├── test_waifu2x.py                 # Waifu2xテストスクリプト
 └── PROJECT_DESIGN.md               # 設計書
 ```
@@ -226,8 +247,9 @@ UpScaleAppProject/
 - **品質プリセット**: Fast, Balanced, Quality
 
 ### AI処理設定
-- **優先手法**: Auto（自動選択）、Waifu2x、Stable Diffusion、Simple
+- **優先手法**: Auto（自動選択）、Waifu2x AMD GPU、Waifu2x、Stable Diffusion、Simple
 - **Waifu2x設定**: スケール、ノイズレベル、モデル種類
+- **AMD GPU設定**: バックエンドタイプ（auto/rocm/vulkan）、メモリ最適化
 - **Stable Diffusion設定**: モデル選択、バッチサイズ等
 
 ## 🔧 トラブルシューティング
@@ -257,12 +279,27 @@ python -c "import torch; print(torch.cuda.is_available())"
 # Waifu2xの動作確認
 python test_waifu2x.py
 
+# AMD GPU環境の確認とセットアップ
+python setup_amd_gpu.py
+
 # Vulkan サポート確認
 # Windows: DirectX診断ツールでVulkan対応を確認
 # Linux: vulkan-utils をインストール後 vulkaninfo 実行
 ```
 
-**4. メモリ不足**
+**4. AMD GPU関連エラー**
+```bash
+# AMD GPU検出テスト
+python -c "from src.modules.amd_gpu_detector import get_amd_gpu_info; print(get_amd_gpu_info())"
+
+# AMD GPU waifu2x可用性テスト
+python -c "from src.modules.amd_waifu2x_backend import test_amd_waifu2x_availability; print(test_amd_waifu2x_availability())"
+
+# ROCm PyTorchインストール（Linux推奨）
+pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/rocm6.0
+```
+
+**5. メモリ不足**
 - より小さなバッチサイズを使用
 - 一時ファイルをクリーンアップ
 - システムメモリを増やす
@@ -278,6 +315,9 @@ python -m pytest tests/ -v
 
 # Waifu2x機能テスト
 python test_waifu2x.py
+
+# AMD GPU環境テスト
+python setup_amd_gpu.py
 
 # 環境テスト
 python test_environment.py
@@ -311,6 +351,8 @@ python test_environment.py
 - [x] GUI実装（フル版・軽量版）
 - [x] Windows互換性対応
 - [x] VideoBuilderクラス実装
+- [x] AMD GPU完全対応（Radeon RX Vega対応）
+- [x] 自動GPU検出・最適化
 - [ ] バッチ処理対応（計画中）
 - [ ] プラグインシステム（将来版）
 
@@ -335,13 +377,15 @@ python test_environment.py
 ## 🙏 謝辞
 
 - [Stable Diffusion](https://github.com/CompVis/stable-diffusion) - AI画像生成
+- [waifu2x-ncnn-vulkan](https://github.com/nihui/waifu2x-ncnn-vulkan) - Vulkan最適化waifu2x
 - [FFmpeg](https://ffmpeg.org/) - 動画処理
 - [OpenCV](https://opencv.org/) - コンピュータビジョン
 - [Hugging Face](https://huggingface.co/) - ML モデルとライブラリ
+- [AMD ROCm](https://rocmdocs.amd.com/) - AMD GPU計算プラットフォーム
 
 ---
 
 **作成者**: SumihisaYutani  
-**バージョン**: 0.2.0  
-**最終更新**: 2025-08-13  
-**Phase 3 完了**: GUI実装・Windows互換性対応
+**バージョン**: 0.3.0  
+**最終更新**: 2025-08-14  
+**Phase 3 完了**: GUI実装・Windows互換性対応・AMD GPU完全対応
