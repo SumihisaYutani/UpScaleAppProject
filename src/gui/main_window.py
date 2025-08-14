@@ -9,6 +9,7 @@ import os
 from pathlib import Path
 import threading
 import time
+import logging
 from typing import Optional
 
 # Add src to path for imports
@@ -31,6 +32,23 @@ if GUI_AVAILABLE:
     ctk.set_default_color_theme("blue")  # Themes: "blue" (standard), "green", "dark-blue"
 
 
+class GUILogHandler(logging.Handler):
+    """Custom logging handler to send logs to GUI"""
+    
+    def __init__(self, gui_callback=None):
+        super().__init__()
+        self.gui_callback = gui_callback
+        self.setFormatter(logging.Formatter('%(levelname)s: %(message)s'))
+    
+    def emit(self, record):
+        if self.gui_callback:
+            try:
+                msg = self.format(record)
+                self.gui_callback(msg)
+            except Exception:
+                pass  # Ignore errors to avoid recursion
+
+
 class ProgressDialog(ctk.CTkToplevel):
     """Progress dialog for processing"""
     
@@ -38,7 +56,7 @@ class ProgressDialog(ctk.CTkToplevel):
         super().__init__(parent)
         
         self.title("Processing Video")
-        self.geometry("500x300")
+        self.geometry("600x400")  # Increased size for log area
         self.resizable(False, False)
         
         # Make it modal
@@ -102,6 +120,26 @@ class ProgressDialog(ctk.CTkToplevel):
         )
         self.stats_label.pack(pady=10)
         
+        # Log display area
+        self.log_frame = ctk.CTkFrame(self.main_frame)
+        self.log_frame.pack(fill="both", expand=True, padx=10, pady=10)
+        
+        self.log_label = ctk.CTkLabel(
+            self.log_frame,
+            text="Log Messages:",
+            font=ctk.CTkFont(size=12, weight="bold"),
+            anchor="w"
+        )
+        self.log_label.pack(anchor="w", padx=10, pady=(5, 0))
+        
+        # Scrollable text area for logs
+        self.log_text = ctk.CTkTextbox(
+            self.log_frame,
+            height=100,
+            font=ctk.CTkFont(size=10, family="Consolas")
+        )
+        self.log_text.pack(fill="both", expand=True, padx=10, pady=5)
+        
         # Cancel button
         self.cancel_button = ctk.CTkButton(
             self.main_frame,
@@ -125,6 +163,20 @@ class ProgressDialog(ctk.CTkToplevel):
     def update_stats(self, stats: str):
         """Update system stats"""
         self.stats_label.configure(text=f"System: {stats}")
+        self.update()
+        
+    def add_log_message(self, message: str):
+        """Add a log message to the display"""
+        timestamp = time.strftime("%H:%M:%S")
+        formatted_message = f"[{timestamp}] {message}\n"
+        
+        # Add message to textbox
+        self.log_text.insert("end", formatted_message)
+        
+        # Auto-scroll to bottom
+        self.log_text.see("end")
+        
+        # Update the display
         self.update()
         
     def _on_cancel(self):
@@ -564,6 +616,33 @@ class MainWindow:
         
         def process_video():
             try:
+                # Set up GUI log handler
+                def log_callback(message):
+                    print(f"[DEBUG] Log callback called with: {message}")  # Debug print
+                    if not progress_dialog.cancelled:
+                        self.root.after(0, lambda: progress_dialog.add_log_message(message))
+                
+                gui_log_handler = GUILogHandler(log_callback)
+                gui_log_handler.setLevel(logging.INFO)
+                
+                # Add initial test message
+                progress_dialog.add_log_message("Log system initialized")
+                
+                # Add handler to relevant loggers
+                loggers_to_track = [
+                    'modules.video_processor',
+                    'modules.waifu2x_processor', 
+                    'enhanced_upscale_app'
+                ]
+                
+                for logger_name in loggers_to_track:
+                    logger = logging.getLogger(logger_name)
+                    logger.addHandler(gui_log_handler)
+                    logger.setLevel(logging.INFO)  # Ensure logger level is set
+                    # Test message to confirm handler is working
+                    logger.info(f"GUI log handler added to {logger_name}")
+                    print(f"[DEBUG] Added handler to logger: {logger_name}")
+                
                 def progress_callback(progress, message):
                     if progress_dialog.cancelled:
                         return
@@ -589,10 +668,23 @@ class MainWindow:
                     progress_callback=progress_callback
                 )
                 
+                # Clean up log handlers
+                for logger_name in loggers_to_track:
+                    logger = logging.getLogger(logger_name)
+                    logger.removeHandler(gui_log_handler)
+                
                 # Handle result
                 self.root.after(0, lambda: self._on_processing_complete(result, progress_dialog))
                 
             except Exception as e:
+                # Clean up log handlers on error too
+                try:
+                    for logger_name in loggers_to_track:
+                        logger = logging.getLogger(logger_name)
+                        logger.removeHandler(gui_log_handler)
+                except:
+                    pass
+                
                 self.root.after(0, lambda: self._on_processing_error(str(e), progress_dialog))
         
         self.processing_thread = threading.Thread(target=process_video, daemon=True)

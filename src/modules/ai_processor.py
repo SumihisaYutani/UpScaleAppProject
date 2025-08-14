@@ -230,15 +230,17 @@ class AIUpscaler:
     
     def cleanup(self):
         """Clean up model from memory"""
-        if self.pipeline:
+        if hasattr(self, 'pipeline') and self.pipeline:
             del self.pipeline
             self.pipeline = None
             self._model_loaded = False
             
-            if torch.cuda.is_available():
+            if TORCH_AVAILABLE and torch.cuda.is_available():
                 torch.cuda.empty_cache()
             
             logger.info("AI model cleaned up from memory")
+        elif hasattr(self, '_available') and not self._available:
+            logger.debug("AI upscaler cleanup skipped - not available")
 
 
 class SimpleUpscaler:

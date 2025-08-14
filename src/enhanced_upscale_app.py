@@ -83,13 +83,29 @@ class EnhancedUpScaleApp:
             self.frame_extractor = VideoFrameExtractor(str(PATHS["temp_dir"]))
             self.video_builder = VideoBuilder(str(PATHS["output_dir"]))
             
-            # AI modules
+            # AI modules - prioritize available backends
             if self.use_ai:
-                if self.use_enhanced_ai:
-                    self.ai_upscaler = create_upscaler(use_enhanced=True)
-                else:
-                    from modules.ai_processor import AIUpscaler
-                    self.ai_upscaler = AIUpscaler()
+                try:
+                    # First try waifu2x since we know it's available
+                    from modules.waifu2x_processor import test_waifu2x_availability
+                    waifu2x_backends = test_waifu2x_availability()
+                    
+                    if any(waifu2x_backends.values()):
+                        logger.info("Using Waifu2x backend for AI processing")
+                        from modules.waifu2x_processor import Waifu2xUpscaler
+                        self.ai_upscaler = Waifu2xUpscaler(backend='ncnn', scale=2)
+                    elif self.use_enhanced_ai:
+                        logger.info("Trying enhanced AI upscaler")
+                        self.ai_upscaler = create_upscaler(use_enhanced=True)
+                    else:
+                        logger.info("Trying standard AI upscaler")
+                        from modules.ai_processor import AIUpscaler
+                        self.ai_upscaler = AIUpscaler()
+                        
+                except Exception as e:
+                    logger.warning(f"Failed to initialize AI upscaler: {e}")
+                    self.use_ai = False
+                    self.ai_upscaler = None
             else:
                 self.ai_upscaler = None
             
@@ -308,11 +324,15 @@ class EnhancedUpScaleApp:
                         self._update_progress(25, "Loading AI model...", progress_callback)
                         
                         # Enhanced AI processing
+                        model_loaded = True  # Default to True
                         if hasattr(self.ai_upscaler, 'load_model'):
                             model_loaded = self.ai_upscaler.load_model()
                             if not model_loaded:
                                 logger.warning("Failed to load AI model, falling back to simple upscaling")
                                 self.use_ai = False
+                        elif hasattr(self.ai_upscaler, '_initialize_ncnn'):
+                            # For Waifu2x, initialization happens in constructor
+                            logger.info("Waifu2x AI upscaler ready for processing")
                         
                         if self.use_ai:
                             self._update_progress(30, "Processing frames with AI...", progress_callback)
@@ -425,8 +445,15 @@ class EnhancedUpScaleApp:
                     # Fallback to simple processing
                     return self._process_frames_simple(frame_files, scale_factor, progress_callback)
             
+            elif hasattr(self.ai_upscaler, 'upscale_frames'):
+                # Use Waifu2x frames processing
+                logger.info("Using Waifu2x for frame processing")
+                return self.ai_upscaler.upscale_frames(
+                    frame_files, str(processed_dir), 
+                    progress_callback=ai_progress_callback
+                )
             else:
-                # Use standard AI processing
+                # Use standard AI processing (for compatibility)
                 return self.ai_upscaler.upscale_batch(
                     frame_files, str(processed_dir), scale_factor,
                     progress_callback=ai_progress_callback

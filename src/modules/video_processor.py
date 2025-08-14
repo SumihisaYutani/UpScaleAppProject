@@ -250,6 +250,7 @@ class VideoFrameExtractor:
         try:
             # Try ffmpeg first
             try:
+                logger.info("Using FFmpeg for frame extraction...")
                 (
                     ffmpeg
                     .input(video_path)
@@ -260,12 +261,14 @@ class VideoFrameExtractor:
                 
                 # Get list of extracted frames
                 frame_files = sorted(self.temp_dir.glob(f"{Path(video_path).stem}_frame_*.png"))
+                logger.info(f"FFmpeg successfully extracted {len(frame_files)} frames")
                 return [str(f) for f in frame_files]
                 
             except Exception as ffmpeg_error:
                 logger.warning(f"FFmpeg frame extraction failed, trying OpenCV: {ffmpeg_error}")
             
             # Fallback to OpenCV
+            logger.info("Falling back to OpenCV for frame extraction...")
             return self._extract_frames_opencv(video_path)
             
         except Exception as e:

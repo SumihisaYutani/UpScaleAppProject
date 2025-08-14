@@ -1,0 +1,1 @@
+# UpScale App Core Module
