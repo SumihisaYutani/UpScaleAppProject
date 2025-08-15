@@ -33,21 +33,27 @@ class AIProcessor:
     def _initialize_backend(self):
         """Initialize the best available AI backend"""
         try:
-            if self.best_backend in ['nvidia', 'nvidia_cuda', 'vulkan'] or 'vulkan' in self.best_backend:
-                # Use Waifu2x executable backend
+            logger.info(f"Initializing backend for: {self.best_backend}")
+            
+            # Always try Waifu2x first for any GPU backend
+            if self.best_backend in ['nvidia', 'nvidia_cuda', 'amd', 'amd_rocm', 'vulkan', 'intel']:
+                logger.info("Attempting to initialize Waifu2x backend")
                 self.backend = Waifu2xExecutableBackend(self.resource_manager, self.gpu_info)
-            else:
-                # Fallback to simple upscaling
-                self.backend = SimpleUpscalingBackend()
                 
-            if self.backend.is_available():
-                logger.info(f"AI backend initialized successfully: {type(self.backend).__name__}")
-            else:
-                logger.warning("AI backend not available, using simple upscaling")
-                self.backend = SimpleUpscalingBackend()
+                if self.backend.is_available():
+                    logger.info(f"Waifu2x backend initialized successfully: {type(self.backend).__name__}")
+                    return
+                else:
+                    logger.warning("Waifu2x backend not available, falling back to simple upscaling")
+            
+            # Fallback to simple upscaling
+            logger.info("Using simple upscaling backend")
+            self.backend = SimpleUpscalingBackend()
                 
         except Exception as e:
             logger.error(f"Failed to initialize AI backend: {e}")
+            import traceback
+            traceback.print_exc()
             self.backend = SimpleUpscalingBackend()
     
     def upscale_frames(self, frame_paths: List[str], output_dir: str, 
@@ -128,7 +134,29 @@ class Waifu2xExecutableBackend:
     
     def is_available(self) -> bool:
         """Check if Waifu2x executable is available"""
-        return self.waifu2x_path is not None
+        if not self.waifu2x_path:
+            logger.warning("Waifu2x executable path not found")
+            return False
+        
+        try:
+            # Test if the executable actually works
+            from pathlib import Path
+            if not Path(self.waifu2x_path).exists():
+                logger.warning(f"Waifu2x executable not found at: {self.waifu2x_path}")
+                return False
+            
+            # Quick test execution to verify it works
+            result = self.resource_manager.run_binary('waifu2x', ['-h'], timeout=10, check=False)
+            if result.returncode == 0 or 'waifu2x' in result.stdout.lower() or 'usage' in result.stdout.lower():
+                logger.info("Waifu2x executable is available and working")
+                return True
+            else:
+                logger.warning(f"Waifu2x executable test failed: {result.stderr}")
+                return False
+                
+        except Exception as e:
+            logger.warning(f"Waifu2x availability check failed: {e}")
+            return False
     
     def upscale_image(self, input_path: str, output_path: str, scale_factor: float = 2.0) -> bool:
         """Upscale single image using Waifu2x"""

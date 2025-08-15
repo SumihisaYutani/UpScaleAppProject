@@ -39,6 +39,12 @@ class ResourceManager:
                 logger.debug(f"Found bundled binary: {name} at {binary_path}")
                 return str(binary_path)
         
+        # Search in all subdirectories of binaries_dir
+        for search_path in self.binaries_dir.rglob(f"{name}*"):
+            if search_path.is_file() and search_path.suffix.lower() in ['.exe', '']:
+                logger.debug(f"Found binary in subdirectory: {name} at {search_path}")
+                return str(search_path)
+        
         # Fallback to system PATH
         system_path = shutil.which(name)
         if system_path:
@@ -52,6 +58,12 @@ class ResourceManager:
                 binary_path = self.binaries[exe_name]
                 if binary_path.exists():
                     return str(binary_path)
+            
+            # Search for .exe version in subdirectories
+            for search_path in self.binaries_dir.rglob(exe_name):
+                if search_path.is_file():
+                    logger.debug(f"Found .exe binary in subdirectory: {exe_name} at {search_path}")
+                    return str(search_path)
             
             system_path = shutil.which(exe_name)
             if system_path:

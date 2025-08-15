@@ -18,14 +18,26 @@
 
 ## 🚀 インストール
 
-### 前提条件
+### 🔥 **簡単インストール（推奨）**
+
+**実行可能ファイル版 - Python不要！**
+```bash
+# 1. 実行可能ファイルを作成
+cd executable/build
+python build.py
+
+# 2. 実行
+./dist/UpScaleApp_Final.exe
+```
+
+### 前提条件（開発版用）
 - Python 3.8以降
 - FFmpeg（システムにインストール済みである必要があります）
 - 推奨: AMD GPU（Radeon RX Vega以降、Vulkan対応）
 - 推奨: NVIDIA GPU（CUDA対応、Stable Diffusion用）
 - または: 統合GPU（Intel/AMD）
 
-### 🎯 クイックスタート
+### 🎯 開発版クイックスタート
 
 **GUI版を使用する場合（推奨）**:
 ```bash
@@ -122,7 +134,32 @@ python test_environment.py
 
 ## 💻 使用方法
 
-### 📱 GUI版（推奨）
+### 🔥 **実行可能ファイル版（最推奨）**
+
+**特徴:**
+- Python環境不要
+- 全ての依存関係を内蔵
+- AMD Vega 56 + Intel CPU構成に最適化
+- マルチGPU対応（NVIDIA/AMD/Intel/Vulkan）
+- ワンクリックで起動
+
+**使用手順:**
+1. `executable/build/dist/UpScaleApp_Final.exe` を実行
+2. 「Browse」でMP4ファイルを選択
+3. 出力フォルダを選択（オプション）
+4. スケールファクターを設定（1.5x〜4.0x）
+5. 品質設定を選択（Fast/Balanced/Quality）
+6. 「Start Processing」をクリック
+
+**システム情報表示:**
+- GPU Backend: 使用中のGPUバックエンド
+- AI Processor: waifu2x_executable
+- GPU Mode: Yes/No
+- Total GPUs: 検出されたGPU数
+- Primary GPU: メインGPU名
+- Secondary GPU: サブGPU名（複数GPU時）
+
+### 📱 開発版GUI（推奨）
 
 **軽量GUI版（Waifu2x対応）**:
 ```bash
@@ -383,9 +420,23 @@ python test_environment.py
 - [Hugging Face](https://huggingface.co/) - ML モデルとライブラリ
 - [AMD ROCm](https://rocmdocs.amd.com/) - AMD GPU計算プラットフォーム
 
+## 📋 更新履歴
+
+### v2.0.0 (2025-08-15) - 実行可能ファイル版完成
+- ✅ **実行可能ファイル版リリース** - Python環境不要の独立実行版
+- ✅ **マルチGPU対応強化** - NVIDIA/AMD/Intel/Vulkan全対応
+- ✅ **AMD GPU最適化** - Vega 56等のAMD GPU向け最適化
+- ✅ **GUI表示改善** - ファイルパス表示、GPU情報表示の修正
+- ✅ **AI Processor統合** - Waifu2x-ncnn-vulkan完全統合
+- ✅ **スレッドセーフ処理** - 並行処理時のファイル競合解決
+- ✅ **エラーハンドリング強化** - 詳細なログとエラー報告
+
+### v0.3.0 (2025-08-14) - Phase 3完了
+- ✅ GUI実装・Windows互換性対応・AMD GPU完全対応
+
 ---
 
 **作成者**: SumihisaYutani  
-**バージョン**: 0.3.0  
-**最終更新**: 2025-08-14  
-**Phase 3 完了**: GUI実装・Windows互換性対応・AMD GPU完全対応
+**バージョン**: 2.0.0  
+**最終更新**: 2025-08-15  
+**最新成果**: 実行可能ファイル版完成・マルチGPU対応・AMD GPU最適化

@@ -278,10 +278,99 @@ class MainGUI:
         backend_info = self.ai_processor.get_backend_info()
         gpu_summary = self.gpu_info.get('best_backend', 'cpu')
         
+        # Count all available GPUs - ensure proper counting
+        total_gpus = 0
+        gpu_names = []
+        all_gpu_details = []
+        
+        # Log GPU info for debugging
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.info(f"GPU Info in GUI: {self.gpu_info}")
+        
+        # Count NVIDIA GPUs
+        nvidia_info = self.gpu_info.get('nvidia', {})
+        if nvidia_info.get('available', False):
+            nvidia_gpus = nvidia_info.get('gpus', [])
+            for gpu in nvidia_gpus:
+                gpu_name = gpu.get('name', 'Unknown NVIDIA')
+                gpu_names.append(gpu_name)
+                all_gpu_details.append(f"NVIDIA: {gpu_name}")
+            logger.info(f"Found {len(nvidia_gpus)} NVIDIA GPUs: {[g.get('name') for g in nvidia_gpus]}")
+        
+        # Count AMD GPUs
+        amd_info = self.gpu_info.get('amd', {})
+        if amd_info.get('available', False):
+            amd_gpus = amd_info.get('gpus', [])
+            for gpu in amd_gpus:
+                gpu_name = gpu.get('name', 'Unknown AMD')
+                gpu_names.append(gpu_name)
+                all_gpu_details.append(f"AMD: {gpu_name}")
+            logger.info(f"Found {len(amd_gpus)} AMD GPUs: {[g.get('name') for g in amd_gpus]}")
+        
+        # Count Intel GPUs
+        intel_info = self.gpu_info.get('intel', {})
+        if intel_info.get('available', False):
+            intel_gpus = intel_info.get('gpus', [])
+            for gpu in intel_gpus:
+                gpu_name = gpu.get('name', 'Unknown Intel')
+                gpu_names.append(gpu_name)
+                all_gpu_details.append(f"Intel: {gpu_name}")
+            logger.info(f"Found {len(intel_gpus)} Intel GPUs: {[g.get('name') for g in intel_gpus]}")
+        
+        # Count Vulkan devices (only if no other GPUs found)
+        vulkan_info = self.gpu_info.get('vulkan', {})
+        if vulkan_info.get('available', False):
+            vulkan_devices = vulkan_info.get('devices', [])
+            # If no discrete GPUs found, use Vulkan devices
+            if len(gpu_names) == 0:
+                for device in vulkan_devices:
+                    device_name = device.get('name', 'Vulkan Device')
+                    gpu_names.append(device_name)
+                    all_gpu_details.append(f"Vulkan: {device_name}")
+            logger.info(f"Found {len(vulkan_devices)} Vulkan devices: {[d.get('name') for d in vulkan_devices]}")
+        
+        # Set total GPU count
+        total_gpus = len(gpu_names)
+        logger.info(f"Total GPU count: {total_gpus}")
+        logger.info(f"All GPU details: {all_gpu_details}")
+        
+        # Determine if GPU mode is active - more comprehensive check
+        gpu_mode_active = (
+            backend_info.get('gpu_mode', False) or 
+            gpu_summary != 'cpu' or 
+            total_gpus > 0 or
+            nvidia_info.get('available', False) or
+            amd_info.get('available', False) or
+            intel_info.get('available', False) or
+            vulkan_info.get('available', False)
+        )
+        
+        logger.info(f"GPU Mode Active: {gpu_mode_active}, Total GPUs: {total_gpus}, Best Backend: {gpu_summary}")
+        
         info_text = f"""GPU Backend: {gpu_summary.upper()}
 AI Processor: {backend_info.get('backend', 'unknown')}
-GPU Mode: {'Yes' if backend_info.get('gpu_mode', False) else 'No'}
-Total GPUs: {sum(1 for gpu_type in ['nvidia', 'amd'] if self.gpu_info.get(gpu_type, {}).get('available', False))}"""
+GPU Mode: {'Yes' if gpu_mode_active else 'No'}
+Total GPUs: {total_gpus}"""
+        
+        # Add GPU details if available
+        if gpu_names:
+            # Show primary GPU
+            primary_gpu = gpu_names[0][:35] + "..." if len(gpu_names[0]) > 35 else gpu_names[0]
+            info_text += f"""
+Primary GPU: {primary_gpu}"""
+            
+            # Show secondary GPU if available
+            if len(gpu_names) > 1:
+                secondary_gpu = gpu_names[1][:35] + "..." if len(gpu_names[1]) > 35 else gpu_names[1]
+                info_text += f"""
+Secondary GPU: {secondary_gpu}"""
+            
+            # Show additional GPUs count if more than 2
+            if len(gpu_names) > 2:
+                additional_count = len(gpu_names) - 2
+                info_text += f"""
+Additional GPUs: +{additional_count} more"""
         
         info_label = ttk.Label(system_frame, text=info_text, justify="left")
         info_label.pack(anchor="w")
@@ -335,14 +424,62 @@ Total GPUs: {sum(1 for gpu_type in ['nvidia', 'amd'] if self.gpu_info.get(gpu_ty
         )
         
         if file_path:
+            # Log for debugging
+            logger.info(f"Setting input file path: {file_path}")
+            
+            # Set the variable
             self.input_path_var.set(file_path)
+            
+            # Force multiple update methods
+            self.input_entry.update()
+            self.input_entry.update_idletasks()
+            self.root.update()
+            self.root.update_idletasks()
+            
+            # Direct manipulation of entry widget
+            self.input_entry.delete(0, tk.END)
+            self.input_entry.insert(0, file_path)
+            self.input_entry.see(0)  # Scroll to beginning
+            
+            # Force focus and refresh
+            self.input_entry.focus_set()
+            self.input_entry.focus_force()
+            self.root.after(100, lambda: self.input_entry.focus_set())
+            
+            # Add status message
+            self._add_status_message(f"Selected: {Path(file_path).name}")
+            logger.info(f"Input entry content: '{self.input_entry.get()}'")
             
     def _browse_output(self):
         """Browse for output folder"""
         folder_path = filedialog.askdirectory(title="Select Output Folder")
         
         if folder_path:
+            # Log for debugging
+            logger.info(f"Setting output folder path: {folder_path}")
+            
+            # Set the variable
             self.output_path_var.set(folder_path)
+            
+            # Force multiple update methods
+            self.output_entry.update()
+            self.output_entry.update_idletasks()
+            self.root.update()
+            self.root.update_idletasks()
+            
+            # Direct manipulation of entry widget
+            self.output_entry.delete(0, tk.END)
+            self.output_entry.insert(0, folder_path)
+            self.output_entry.see(0)  # Scroll to beginning
+            
+            # Force focus and refresh
+            self.output_entry.focus_set()
+            self.output_entry.focus_force()
+            self.root.after(100, lambda: self.output_entry.focus_set())
+            
+            # Add status message
+            self._add_status_message(f"Output folder: {Path(folder_path).name}")
+            logger.info(f"Output entry content: '{self.output_entry.get()}'")
             
     def _on_input_change(self, *args):
         """Handle input file change"""

@@ -93,15 +93,23 @@ class UpScaleApp:
         try:
             logger.info("Starting UpScale App...")
             
+            # Initialize tkinter environment first
+            import tkinter as tk
+            root = tk.Tk()
+            root.withdraw()  # Hide the root window initially
+            
             # Initialize components
             if not self.initialize():
+                root.destroy()
                 return 1
             
             # Start GUI
             self.is_running = True
             logger.info("Launching GUI...")
             
-            return self.gui.run()
+            result = self.gui.run()
+            root.destroy()
+            return result
             
         except KeyboardInterrupt:
             logger.info("Application interrupted by user")

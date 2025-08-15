@@ -74,3 +74,14 @@ htmlcov/
 
 # Documentation
 docs/_build/
+
+# Executable binaries (too large for GitHub)
+executable/resources/binaries/*.exe
+executable/resources/binaries/ffmpeg
+executable/resources/binaries/ffprobe
+executable/resources/binaries/waifu2x-ncnn-vulkan
+
+# Build artifacts
+executable/build/dist/
+executable/build/build/
+executable/build/*.zip

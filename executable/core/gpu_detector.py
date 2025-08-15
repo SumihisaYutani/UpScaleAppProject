@@ -94,36 +94,76 @@ class GPUDetector:
         }
         
         try:
-            # Try Windows WMI approach
+            # Try Windows WMI approach with multiple methods
             if os.name == 'nt':
                 try:
+                    # Method 1: Get detailed GPU info
                     result = subprocess.run([
-                        'wmic', 'path', 'win32_VideoController',
-                        'get', 'name,AdapterRAM', '/format:csv'
-                    ], capture_output=True, text=True, timeout=10)
+                        'wmic', 'path', 'win32_VideoController', 'where', 'Name like "%AMD%" or Name like "%Radeon%" or Name like "%Vega%"',
+                        'get', 'name,AdapterRAM,DriverVersion', '/format:csv'
+                    ], capture_output=True, text=True, timeout=15)
                     
                     if result.returncode == 0:
-                        lines = result.stdout.strip().split('\n')[1:]  # Skip header
+                        lines = result.stdout.strip().split('\n')
                         for line in lines:
-                            if line.strip() and 'AMD' in line.upper():
+                            if line.strip() and ('AMD' in line.upper() or 'RADEON' in line.upper() or 'VEGA' in line.upper()):
                                 parts = line.split(',')
                                 if len(parts) >= 3:
-                                    name = parts[2].strip()
-                                    memory_str = parts[1].strip()
+                                    adapter_ram = parts[1].strip() if len(parts) > 1 else ""
+                                    driver_version = parts[2].strip() if len(parts) > 2 else ""
+                                    name = parts[3].strip() if len(parts) > 3 else ""
+                                    
                                     memory_mb = 0
+                                    if adapter_ram and adapter_ram.isdigit():
+                                        memory_mb = int(adapter_ram) // (1024 * 1024)
                                     
-                                    if memory_str and memory_str.isdigit():
-                                        memory_mb = int(memory_str) // (1024 * 1024)
-                                    
-                                    if name:
+                                    if name and 'Intel' not in name:  # Exclude Intel integrated graphics
                                         info['gpus'].append({
                                             'name': name,
-                                            'memory_mb': memory_mb
+                                            'memory_mb': memory_mb,
+                                            'driver_version': driver_version
                                         })
                                         info['available'] = True
+                                        logger.info(f"Found AMD GPU: {name} with {memory_mb}MB VRAM")
                                         
                 except Exception as e:
-                    logger.debug(f"WMI AMD detection failed: {e}")
+                    logger.debug(f"WMI AMD specific detection failed: {e}")
+                
+                # Method 2: General video controller search if first method didn't find anything
+                if not info['gpus']:
+                    try:
+                        result = subprocess.run([
+                            'wmic', 'path', 'win32_VideoController',
+                            'get', 'name,AdapterRAM', '/format:csv'
+                        ], capture_output=True, text=True, timeout=10)
+                        
+                        if result.returncode == 0:
+                            lines = result.stdout.strip().split('\n')
+                            for line in lines:
+                                line_upper = line.upper()
+                                if (line.strip() and 
+                                    ('AMD' in line_upper or 'RADEON' in line_upper or 'VEGA' in line_upper) and
+                                    'INTEL' not in line_upper):
+                                    
+                                    parts = line.split(',')
+                                    if len(parts) >= 3:
+                                        adapter_ram = parts[1].strip()
+                                        name = parts[2].strip()
+                                        memory_mb = 0
+                                        
+                                        if adapter_ram and adapter_ram.isdigit():
+                                            memory_mb = int(adapter_ram) // (1024 * 1024)
+                                        
+                                        if name:
+                                            info['gpus'].append({
+                                                'name': name,
+                                                'memory_mb': memory_mb
+                                            })
+                                            info['available'] = True
+                                            logger.info(f"Found AMD GPU (general): {name} with {memory_mb}MB VRAM")
+                                            
+                    except Exception as e:
+                        logger.debug(f"WMI general AMD detection failed: {e}")
             
             # Check ROCm availability
             try:
@@ -209,7 +249,7 @@ class GPUDetector:
     
     def _determine_best_backend(self, gpu_info: Dict) -> str:
         """Determine the best available GPU backend"""
-        # Priority order: NVIDIA CUDA > AMD > Vulkan > CPU
+        # Priority order: NVIDIA CUDA > AMD discrete > Vulkan > Intel integrated > CPU
         
         if gpu_info['nvidia']['available'] and gpu_info['nvidia']['cuda_available']:
             return 'nvidia_cuda'
@@ -218,9 +258,12 @@ class GPUDetector:
         elif gpu_info['amd']['available'] and gpu_info['amd']['rocm_available']:
             return 'amd_rocm'
         elif gpu_info['amd']['available']:
+            # Prefer AMD discrete GPUs (like Vega 56)
             return 'amd'
         elif gpu_info['vulkan']['available']:
             return 'vulkan'
+        elif gpu_info['intel']['available']:
+            return 'intel'
         else:
             return 'cpu'
     
@@ -237,17 +280,25 @@ class GPUDetector:
             'primary_gpu': None
         }
         
-        # Count total GPUs and find primary
+        # Count total GPUs and find primary - prioritize discrete GPUs
         all_gpus = []
+        
+        # Add NVIDIA GPUs first (highest priority)
         if gpu_info['nvidia']['gpus']:
             all_gpus.extend(gpu_info['nvidia']['gpus'])
-            if not summary['primary_gpu']:
-                summary['primary_gpu'] = gpu_info['nvidia']['gpus'][0]
+            summary['primary_gpu'] = gpu_info['nvidia']['gpus'][0]
         
+        # Add AMD GPUs (second priority for discrete)
         if gpu_info['amd']['gpus']:
             all_gpus.extend(gpu_info['amd']['gpus'])
             if not summary['primary_gpu']:
                 summary['primary_gpu'] = gpu_info['amd']['gpus'][0]
+        
+        # Add Intel GPUs last (integrated graphics)
+        if gpu_info['intel']['gpus']:
+            all_gpus.extend(gpu_info['intel']['gpus'])
+            if not summary['primary_gpu']:
+                summary['primary_gpu'] = gpu_info['intel']['gpus'][0]
         
         summary['total_gpus'] = len(all_gpus)
         
