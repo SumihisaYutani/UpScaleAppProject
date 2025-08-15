@@ -134,8 +134,16 @@ class Waifu2xExecutableBackend:
     
     def is_available(self) -> bool:
         """Check if Waifu2x executable is available"""
+        logger.info(f"Checking Waifu2x availability...")
+        logger.info(f"Waifu2x path from resource manager: {self.waifu2x_path}")
+        
         if not self.waifu2x_path:
             logger.warning("Waifu2x executable path not found")
+            # Try to debug the resource manager
+            logger.info("Available binaries in resource manager:")
+            availability = self.resource_manager.check_binary_availability()
+            for bin_name, available in availability.items():
+                logger.info(f"  {bin_name}: {available}")
             return False
         
         try:
@@ -145,7 +153,10 @@ class Waifu2xExecutableBackend:
                 logger.warning(f"Waifu2x executable not found at: {self.waifu2x_path}")
                 return False
             
+            logger.info(f"Waifu2x executable found at: {self.waifu2x_path}")
+            
             # Quick test execution to verify it works
+            logger.info("Testing waifu2x executable with -h flag...")
             result = self.resource_manager.run_binary('waifu2x', ['-h'], timeout=10, check=False)
             if result.returncode == 0 or 'waifu2x' in result.stdout.lower() or 'usage' in result.stdout.lower():
                 logger.info("Waifu2x executable is available and working")

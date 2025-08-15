@@ -115,7 +115,7 @@ class VideoProcessor:
                 'info': None
             }
     
-    def extract_frames(self, video_path: str, progress_callback: Optional[Callable] = None) -> List[str]:
+    def extract_frames(self, video_path: str, progress_callback: Optional[Callable] = None, progress_dialog=None) -> List[str]:
         """Extract frames from video using FFmpeg"""
         video_path = Path(video_path)
         
@@ -142,14 +142,79 @@ class VideoProcessor:
             
             logger.info("Using FFmpeg for frame extraction...")
             
-            # Run ffmpeg
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+            if progress_callback:
+                progress_callback(10, "Starting frame extraction...")
             
-            if result.returncode != 0:
-                logger.error(f"FFmpeg failed: {result.stderr}")
-                raise RuntimeError(f"FFmpeg frame extraction failed: {result.stderr}")
+            # Start FFmpeg process with real-time monitoring
+            import time
+            import threading
             
-            # Get list of extracted frames
+            process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, 
+                                     text=True, bufsize=1, universal_newlines=True)
+            
+            # Register process with progress dialog for cancellation
+            if progress_dialog:
+                progress_dialog.current_process = process
+            
+            # Monitor progress in background thread
+            def monitor_progress():
+                start_time = time.time()
+                while process.poll() is None:
+                    # Check for cancellation
+                    if progress_dialog and progress_dialog.cancelled:
+                        try:
+                            # Forcefully terminate FFmpeg process
+                            process.terminate()
+                            try:
+                                process.wait(timeout=1)
+                            except subprocess.TimeoutExpired:
+                                process.kill()
+                                process.wait(timeout=2)
+                            
+                            # Kill any child processes on Windows
+                            import os
+                            if os.name == 'nt':  # Windows
+                                try:
+                                    import subprocess
+                                    subprocess.run(['taskkill', '/F', '/T', '/PID', str(process.pid)], 
+                                                 capture_output=True, timeout=3)
+                                except:
+                                    pass
+                        except:
+                            pass
+                        break
+                    
+                    # Count current extracted frames
+                    current_frames = len(list(self.frame_dir.glob("frame_*.png")))
+                    if current_frames > 0:
+                        elapsed = time.time() - start_time
+                        if progress_callback:
+                            progress_callback(20 + min(60, (current_frames / 1000) * 60), 
+                                            f"Extracting frames... {current_frames} frames extracted")
+                    time.sleep(2)  # Check every 2 seconds
+            
+            monitor_thread = threading.Thread(target=monitor_progress, daemon=True)
+            monitor_thread.start()
+            
+            # Wait for process completion with timeout
+            try:
+                stdout, stderr = process.communicate(timeout=1800)  # 30 minutes
+            except subprocess.TimeoutExpired:
+                process.kill()
+                raise RuntimeError("Frame extraction timed out after 30 minutes")
+            
+            # Check if cancelled during processing
+            if progress_dialog and progress_dialog.cancelled:
+                raise KeyboardInterrupt("Processing cancelled by user")
+            
+            if progress_callback:
+                progress_callback(85, "Frame extraction completed, counting final frames...")
+            
+            if process.returncode != 0:
+                logger.error(f"FFmpeg failed: {stderr}")
+                raise RuntimeError(f"FFmpeg frame extraction failed: {stderr}")
+            
+            # Get final list of extracted frames
             frame_files = sorted(self.frame_dir.glob("frame_*.png"))
             frame_paths = [str(f) for f in frame_files]
             

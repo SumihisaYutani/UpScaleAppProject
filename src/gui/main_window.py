@@ -32,6 +32,83 @@ if GUI_AVAILABLE:
     ctk.set_default_color_theme("blue")  # Themes: "blue" (standard), "green", "dark-blue"
 
 
+class ProcessingStepTracker:
+    """実行ステップごとのステータス追跡クラス"""
+    
+    STEPS = [
+        {"id": "validate", "name": "動画検証", "emoji": "🔍", "weight": 5},
+        {"id": "extract", "name": "フレーム抽出", "emoji": "📸", "weight": 15}, 
+        {"id": "upscale", "name": "AI処理", "emoji": "🤖", "weight": 70},
+        {"id": "combine", "name": "動画結合", "emoji": "🎬", "weight": 10}
+    ]
+    
+    def __init__(self):
+        self.current_step = 0
+        self.step_progress = {}
+        self.step_timers = {}
+        self.step_status = {}
+        
+        # Initialize all steps
+        for i, step in enumerate(self.STEPS):
+            self.step_progress[step["id"]] = 0.0
+            self.step_timers[step["id"]] = None
+            self.step_status[step["id"]] = "pending"  # pending, active, completed, error
+    
+    def start_step(self, step_id: str):
+        """指定ステップの開始"""
+        import time
+        if step_id in self.step_timers:
+            self.step_timers[step_id] = time.time()
+            self.step_status[step_id] = "active"
+            
+    def update_step(self, step_id: str, progress: float):
+        """ステップ内の進捗更新"""
+        if step_id in self.step_progress:
+            self.step_progress[step_id] = min(100.0, max(0.0, progress))
+            
+    def complete_step(self, step_id: str):
+        """ステップ完了"""
+        import time
+        if step_id in self.step_status:
+            self.step_status[step_id] = "completed"
+            self.step_progress[step_id] = 100.0
+            if self.step_timers[step_id]:
+                elapsed = time.time() - self.step_timers[step_id]
+                self.step_timers[step_id] = elapsed
+    
+    def error_step(self, step_id: str):
+        """ステップエラー"""
+        if step_id in self.step_status:
+            self.step_status[step_id] = "error"
+    
+    def get_overall_progress(self) -> float:
+        """全体の進捗計算"""
+        total_weight = sum(step["weight"] for step in self.STEPS)
+        completed_weight = 0.0
+        
+        for step in self.STEPS:
+            step_id = step["id"]
+            if self.step_status[step_id] == "completed":
+                completed_weight += step["weight"]
+            elif self.step_status[step_id] == "active":
+                step_progress = self.step_progress[step_id] / 100.0
+                completed_weight += step["weight"] * step_progress
+                
+        return (completed_weight / total_weight) * 100.0
+    
+    def get_step_info(self, step_id: str) -> dict:
+        """ステップ情報取得"""
+        for step in self.STEPS:
+            if step["id"] == step_id:
+                return {
+                    "name": step["name"],
+                    "emoji": step["emoji"],
+                    "progress": self.step_progress[step_id],
+                    "status": self.step_status[step_id],
+                    "timer": self.step_timers[step_id]
+                }
+        return {}
+
 class GUILogHandler(logging.Handler):
     """Custom logging handler to send logs to GUI"""
     
@@ -56,7 +133,7 @@ class ProgressDialog(ctk.CTkToplevel):
         super().__init__(parent)
         
         self.title("Processing Video")
-        self.geometry("600x400")  # Increased size for log area
+        self.geometry("700x400")  # Compact size with separate log window
         self.resizable(False, False)
         
         # Make it modal
@@ -65,9 +142,12 @@ class ProgressDialog(ctk.CTkToplevel):
         
         # Center on parent
         parent.update_idletasks()
-        x = (parent.winfo_x() + parent.winfo_width() // 2) - 250
-        y = (parent.winfo_y() + parent.winfo_height() // 2) - 150
+        x = (parent.winfo_x() + parent.winfo_width() // 2) - 350
+        y = (parent.winfo_y() + parent.winfo_height() // 2) - 250
         self.geometry(f"+{x}+{y}")
+        
+        # Initialize step tracker
+        self.step_tracker = ProcessingStepTracker()
         
         self._setup_ui()
         
@@ -88,26 +168,92 @@ class ProgressDialog(ctk.CTkToplevel):
         )
         self.title_label.pack(pady=(10, 20))
         
-        # Status label
-        self.status_label = ctk.CTkLabel(
-            self.main_frame, 
-            text="Initializing...",
-            font=ctk.CTkFont(size=14)
-        )
-        self.status_label.pack(pady=5)
+        # Overall progress section
+        overall_frame = ctk.CTkFrame(self.main_frame)
+        overall_frame.pack(fill="x", padx=10, pady=(0, 10))
         
-        # Progress bar
-        self.progress_bar = ctk.CTkProgressBar(self.main_frame)
-        self.progress_bar.pack(fill="x", padx=20, pady=10)
+        # Overall status label
+        self.status_label = ctk.CTkLabel(
+            overall_frame, 
+            text="Initializing...",
+            font=ctk.CTkFont(size=14, weight="bold")
+        )
+        self.status_label.pack(pady=(10, 5))
+        
+        # Overall progress bar
+        self.progress_bar = ctk.CTkProgressBar(overall_frame)
+        self.progress_bar.pack(fill="x", padx=20, pady=5)
         self.progress_bar.set(0)
         
-        # Progress percentage
+        # Overall progress percentage
         self.progress_label = ctk.CTkLabel(
-            self.main_frame, 
+            overall_frame, 
             text="0%",
             font=ctk.CTkFont(size=12)
         )
-        self.progress_label.pack(pady=5)
+        self.progress_label.pack(pady=(0, 10))
+        
+        # Step progress section
+        steps_frame = ctk.CTkFrame(self.main_frame)
+        steps_frame.pack(fill="x", padx=10, pady=(0, 10))
+        
+        steps_title = ctk.CTkLabel(
+            steps_frame,
+            text="📋 Processing Steps",
+            font=ctk.CTkFont(size=14, weight="bold")
+        )
+        steps_title.pack(pady=(10, 5))
+        
+        # Create step displays
+        self.step_displays = {}
+        for step in self.step_tracker.STEPS:
+            step_container = ctk.CTkFrame(steps_frame)
+            step_container.pack(fill="x", padx=10, pady=2)
+            
+            # Step info frame (left side)
+            info_frame = ctk.CTkFrame(step_container)
+            info_frame.pack(side="left", fill="both", expand=True, padx=5, pady=5)
+            
+            # Step name with emoji and status
+            step_label = ctk.CTkLabel(
+                info_frame,
+                text=f"{step['emoji']} {step['name']}",
+                font=ctk.CTkFont(size=12),
+                anchor="w"
+            )
+            step_label.pack(side="left", padx=5)
+            
+            # Step status indicator
+            status_label = ctk.CTkLabel(
+                info_frame,
+                text="⏳",
+                font=ctk.CTkFont(size=12)
+            )
+            status_label.pack(side="right", padx=5)
+            
+            # Step progress bar (right side)
+            progress_frame = ctk.CTkFrame(step_container)
+            progress_frame.pack(side="right", padx=5, pady=5)
+            
+            step_progress = ctk.CTkProgressBar(progress_frame, width=100)
+            step_progress.pack(padx=5, pady=2)
+            step_progress.set(0)
+            
+            step_percent = ctk.CTkLabel(
+                progress_frame,
+                text="0%",
+                font=ctk.CTkFont(size=10)
+            )
+            step_percent.pack(padx=5)
+            
+            self.step_displays[step["id"]] = {
+                "container": step_container,
+                "status_label": status_label,
+                "progress_bar": step_progress,
+                "percent_label": step_percent
+            }
+        
+        steps_frame.pack(pady=(0, 10))
         
         # System stats frame
         self.stats_frame = ctk.CTkFrame(self.main_frame)
@@ -156,6 +302,47 @@ class ProgressDialog(ctk.CTkToplevel):
         self.progress_bar.set(progress / 100)
         self.progress_label.configure(text=f"{progress:.1f}%")
         self.status_label.configure(text=message)
+        
+        # Update window
+        self.update()
+    
+    def update_step_progress(self, step_id: str, progress: float, status: str = None):
+        """Update individual step progress"""
+        if step_id not in self.step_displays:
+            return
+            
+        # Update step tracker
+        if status == "start":
+            self.step_tracker.start_step(step_id)
+        elif status == "complete":
+            self.step_tracker.complete_step(step_id)
+        elif status == "error":
+            self.step_tracker.error_step(step_id)
+        else:
+            self.step_tracker.update_step(step_id, progress)
+        
+        # Update UI
+        display = self.step_displays[step_id]
+        
+        # Update progress bar and percentage
+        display["progress_bar"].set(progress / 100)
+        display["percent_label"].configure(text=f"{progress:.0f}%")
+        
+        # Update status indicator
+        step_status = self.step_tracker.step_status[step_id]
+        if step_status == "pending":
+            display["status_label"].configure(text="⏳")
+        elif step_status == "active":
+            display["status_label"].configure(text="🔄")
+        elif step_status == "completed":
+            display["status_label"].configure(text="✅")
+        elif step_status == "error":
+            display["status_label"].configure(text="❌")
+        
+        # Update overall progress
+        overall_progress = self.step_tracker.get_overall_progress()
+        self.progress_bar.set(overall_progress / 100)
+        self.progress_label.configure(text=f"{overall_progress:.1f}%")
         
         # Update window
         self.update()
@@ -209,7 +396,7 @@ class MainWindow:
         """Setup main window"""
         self.root = ctk.CTk()
         self.root.title("UpScale App - AI Video Upscaling Tool v0.2.0")
-        self.root.geometry("800x700")
+        self.root.geometry("900x800")
         
         # Set icon (if available)
         try:
@@ -649,6 +836,43 @@ class MainWindow:
                         
                     # Update progress dialog
                     self.root.after(0, lambda: progress_dialog.update_progress(progress, message))
+                    
+                    # Map progress to processing steps
+                    if progress <= 10:
+                        # Validation and setup (0-10%)
+                        if progress <= 5:
+                            step_progress = (progress / 5) * 100
+                            self.root.after(0, lambda: progress_dialog.update_step_progress("validate", step_progress, "start" if progress == 0 else None))
+                        else:
+                            self.root.after(0, lambda: progress_dialog.update_step_progress("validate", 100, "complete"))
+                            # Start frame extraction
+                            extract_progress = ((progress - 5) / 5) * 100
+                            self.root.after(0, lambda: progress_dialog.update_step_progress("extract", extract_progress, "start" if progress == 5 else None))
+                    elif progress <= 25:
+                        # Frame extraction (10-25%)
+                        if progress == 25:
+                            self.root.after(0, lambda: progress_dialog.update_step_progress("extract", 100, "complete"))
+                        else:
+                            extract_progress = ((progress - 10) / 15) * 100
+                            self.root.after(0, lambda: progress_dialog.update_step_progress("extract", extract_progress))
+                    elif progress <= 90:
+                        # AI upscaling (25-90%)
+                        if progress == 25:
+                            self.root.after(0, lambda: progress_dialog.update_step_progress("upscale", 0, "start"))
+                        elif progress == 90:
+                            self.root.after(0, lambda: progress_dialog.update_step_progress("upscale", 100, "complete"))
+                        else:
+                            upscale_progress = ((progress - 25) / 65) * 100
+                            self.root.after(0, lambda: progress_dialog.update_step_progress("upscale", upscale_progress))
+                    else:
+                        # Video combining (90-100%)
+                        if progress == 90:
+                            self.root.after(0, lambda: progress_dialog.update_step_progress("combine", 0, "start"))
+                        elif progress == 100:
+                            self.root.after(0, lambda: progress_dialog.update_step_progress("combine", 100, "complete"))
+                        else:
+                            combine_progress = ((progress - 90) / 10) * 100
+                            self.root.after(0, lambda: progress_dialog.update_step_progress("combine", combine_progress))
                     
                     # Update system stats
                     if hasattr(self.app, 'monitor') and self.app.monitor:
