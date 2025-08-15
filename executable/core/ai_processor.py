@@ -137,6 +137,27 @@ class Waifu2xExecutableBackend:
         # Only fallback to CPU if explicitly needed
         # return -1  # CPU mode
     
+    def _get_optimal_tile_size(self) -> int:
+        """Get optimal tile size for GPU (equivalent to BLOCKSIZE)"""
+        # Radeon RX Vega has 8GB HBM2 memory
+        # Start with conservative value and can be increased
+        gpu_name = "unknown"
+        try:
+            gpu_name = self.gpu_info.get('amd', {}).get('gpus', [{}])[0].get('name', 'unknown').lower()
+        except:
+            pass
+        
+        if 'vega' in gpu_name:
+            # Radeon RX Vega: Optimized based on test results - 256 is fastest
+            logger.info("Using optimized tile size 256 for Radeon RX Vega (tested optimal)")
+            return 256
+        elif 'rx' in gpu_name:
+            # Other RX series: moderate tile size
+            return 256
+        else:
+            # Conservative default for unknown AMD GPUs
+            return 256
+    
     def is_available(self) -> bool:
         """Check if Waifu2x executable is available"""
         logger.info(f"Checking Waifu2x availability...")
@@ -183,16 +204,20 @@ class Waifu2xExecutableBackend:
             # Convert scale factor to integer (Waifu2x supports 1, 2, 4, 8, 16, 32)
             scale_int = max(1, min(32, int(scale_factor)))
             
+            # Optimize tile size for Radeon RX Vega (equivalent to BLOCKSIZE)
+            # Start with conservative 256, can be increased to 512, 1024+ based on GPU memory
+            tile_size = self._get_optimal_tile_size()
+            
             cmd = [
                 self.waifu2x_path,
                 '-i', input_path,
                 '-o', output_path,
                 '-s', str(scale_int),
                 '-n', '1',  # Noise reduction level
-                '-g', str(self.gpu_id),  # GPU ID (-1 for CPU)
+                '-g', '0',  # Force GPU 0 (Radeon RX Vega) explicitly
                 '-m', 'models-cunet',  # Model type
                 '-f', 'png',  # Output format
-                '-t', '512',  # Tile size (larger for better GPU utilization)
+                '-t', str(tile_size),  # Optimized tile size for GPU memory
                 '-j', '1:4:2',  # load:proc:save threads (optimized for GPU)
                 '-v'  # Verbose output for debugging
             ]

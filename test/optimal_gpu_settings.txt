@@ -1,0 +1,5 @@
+# Optimal GPU Settings for Waifu2x
+TILE_SIZE=256
+GPU_ID=0
+THREADING=1:4:2
+MODEL=models-cunet
