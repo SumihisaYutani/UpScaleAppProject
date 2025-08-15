@@ -513,8 +513,13 @@ class ProgressDialog:
                         # Fallback: use taskkill on Windows
                         try:
                             import subprocess
+                            # Hide console window when running taskkill
+                            startupinfo = subprocess.STARTUPINFO()
+                            startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+                            startupinfo.wShowWindow = subprocess.SW_HIDE
+                            
                             subprocess.run(['taskkill', '/F', '/T', '/PID', str(self.current_process.pid)], 
-                                         capture_output=True, timeout=5)
+                                         capture_output=True, timeout=5, startupinfo=startupinfo)
                         except:
                             pass
             except Exception as e:
@@ -523,7 +528,12 @@ class ProgressDialog:
         # Kill all FFmpeg processes as final measure
         try:
             import subprocess
-            subprocess.run(['taskkill', '/F', '/IM', 'ffmpeg.exe'], capture_output=True, timeout=5)
+            # Hide console window when running taskkill
+            startupinfo = subprocess.STARTUPINFO()
+            startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+            startupinfo.wShowWindow = subprocess.SW_HIDE
+            
+            subprocess.run(['taskkill', '/F', '/IM', 'ffmpeg.exe'], capture_output=True, timeout=5, startupinfo=startupinfo)
         except:
             pass
         

@@ -127,7 +127,7 @@ class ResourceManager:
         return None
     
     def run_binary(self, binary_name: str, args: List[str], 
-                   timeout: int = 300, check: bool = True) -> subprocess.CompletedProcess:
+                   timeout: int = 300, check: bool = True, hide_window: bool = False) -> subprocess.CompletedProcess:
         """Run a binary with given arguments"""
         binary_path = self.get_binary_path(binary_name)
         if not binary_path:
@@ -136,13 +136,21 @@ class ResourceManager:
         cmd = [binary_path] + args
         logger.debug(f"Running command: {' '.join(cmd)}")
         
+        # Setup to hide console window on Windows
+        startupinfo = None
+        if hide_window and os.name == 'nt':  # Windows
+            startupinfo = subprocess.STARTUPINFO()
+            startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+            startupinfo.wShowWindow = subprocess.SW_HIDE
+        
         try:
             result = subprocess.run(
                 cmd,
                 capture_output=True,
                 text=True,
                 timeout=timeout,
-                check=check
+                check=check,
+                startupinfo=startupinfo
             )
             return result
         except subprocess.TimeoutExpired:

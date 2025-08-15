@@ -157,7 +157,7 @@ class Waifu2xExecutableBackend:
             
             # Quick test execution to verify it works
             logger.info("Testing waifu2x executable with -h flag...")
-            result = self.resource_manager.run_binary('waifu2x', ['-h'], timeout=10, check=False)
+            result = self.resource_manager.run_binary('waifu2x', ['-h'], timeout=10, check=False, hide_window=True)
             if result.returncode == 0 or 'waifu2x' in result.stdout.lower() or 'usage' in result.stdout.lower():
                 logger.info("Waifu2x executable is available and working")
                 return True
@@ -189,12 +189,20 @@ class Waifu2xExecutableBackend:
                 '-f', 'png'  # Output format
             ]
             
+            # Hide console window on Windows
+            startupinfo = None
+            if os.name == 'nt':  # Windows
+                startupinfo = subprocess.STARTUPINFO()
+                startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+                startupinfo.wShowWindow = subprocess.SW_HIDE
+            
             # Run waifu2x
             result = subprocess.run(
                 cmd, 
                 capture_output=True, 
                 text=True, 
-                timeout=120  # 2 minute timeout per image
+                timeout=120,  # 2 minute timeout per image
+                startupinfo=startupinfo
             )
             
             if result.returncode != 0:

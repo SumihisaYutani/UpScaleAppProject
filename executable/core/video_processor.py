@@ -57,7 +57,14 @@ class VideoProcessor:
                 str(video_path)
             ]
             
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+            # Hide console window on Windows
+            startupinfo = None
+            if os.name == 'nt':  # Windows
+                startupinfo = subprocess.STARTUPINFO()
+                startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+                startupinfo.wShowWindow = subprocess.SW_HIDE
+            
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=30, startupinfo=startupinfo)
             
             if result.returncode != 0:
                 return {
@@ -149,8 +156,16 @@ class VideoProcessor:
             import time
             import threading
             
+            # Hide console window on Windows
+            startupinfo = None
+            if os.name == 'nt':  # Windows
+                startupinfo = subprocess.STARTUPINFO()
+                startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+                startupinfo.wShowWindow = subprocess.SW_HIDE
+            
             process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, 
-                                     text=True, bufsize=1, universal_newlines=True)
+                                     text=True, bufsize=1, universal_newlines=True,
+                                     startupinfo=startupinfo)
             
             # Register process with progress dialog for cancellation
             if progress_dialog:
@@ -270,7 +285,14 @@ class VideoProcessor:
                 
                 logger.info(f"Combining {len(frame_paths)} frames into video...")
                 
-                result = subprocess.run(cmd, capture_output=True, text=True, timeout=1200)
+                # Hide console window on Windows
+                startupinfo = None
+                if os.name == 'nt':  # Windows
+                    startupinfo = subprocess.STARTUPINFO()
+                    startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+                    startupinfo.wShowWindow = subprocess.SW_HIDE
+                
+                result = subprocess.run(cmd, capture_output=True, text=True, timeout=1200, startupinfo=startupinfo)
                 
                 if result.returncode != 0:
                     logger.error(f"FFmpeg combine failed: {result.stderr}")
