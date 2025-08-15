@@ -121,16 +121,21 @@ class Waifu2xExecutableBackend:
         """Determine best GPU ID to use"""
         best_backend = self.gpu_info.get('best_backend', 'cpu')
         
-        if best_backend == 'cpu':
-            return -1  # CPU mode
+        # Force GPU usage for better performance
+        # Prefer Radeon RX Vega (GPU 0) over Intel HD Graphics (GPU 1)
+        if self.gpu_info.get('amd', {}).get('available'):
+            logger.info("Using AMD Radeon RX Vega (GPU 0) for waifu2x")
+            return 0  # AMD GPU (Radeon RX Vega)
+        elif self.gpu_info.get('nvidia', {}).get('available'):
+            logger.info("Using NVIDIA GPU (GPU 0) for waifu2x")
+            return 0  # NVIDIA GPU
+        else:
+            # Even if no GPU info, try GPU 0 (Radeon RX Vega)
+            logger.info("Attempting to use GPU 0 (Radeon RX Vega) for waifu2x")
+            return 0  # Default to first GPU
         
-        # Try to use first available GPU
-        if self.gpu_info.get('nvidia', {}).get('available'):
-            return 0  # First NVIDIA GPU
-        elif self.gpu_info.get('amd', {}).get('available'):
-            return 0  # First AMD GPU
-        
-        return -1  # Default to CPU
+        # Only fallback to CPU if explicitly needed
+        # return -1  # CPU mode
     
     def is_available(self) -> bool:
         """Check if Waifu2x executable is available"""
@@ -186,7 +191,10 @@ class Waifu2xExecutableBackend:
                 '-n', '1',  # Noise reduction level
                 '-g', str(self.gpu_id),  # GPU ID (-1 for CPU)
                 '-m', 'models-cunet',  # Model type
-                '-f', 'png'  # Output format
+                '-f', 'png',  # Output format
+                '-t', '512',  # Tile size (larger for better GPU utilization)
+                '-j', '1:4:2',  # load:proc:save threads (optimized for GPU)
+                '-v'  # Verbose output for debugging
             ]
             
             # Hide console window on Windows
