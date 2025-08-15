@@ -334,7 +334,32 @@ class VideoProcessor:
             # Clean up frame directory
             if self.frame_dir.exists():
                 for frame_file in self.frame_dir.glob("*.png"):
-                    frame_file.unlink()
-                logger.info("Cleaned up frame files")
+                    try:
+                        frame_file.unlink()
+                    except:
+                        pass
+                
+                # Also clean up upscaled directory if it exists
+                upscaled_dir = self.temp_dir / "upscaled"
+                if upscaled_dir.exists():
+                    for upscaled_file in upscaled_dir.glob("*.png"):
+                        try:
+                            upscaled_file.unlink()
+                        except:
+                            pass
+                    try:
+                        upscaled_dir.rmdir()
+                    except:
+                        pass
+                
+                # Clean up entire temp directory
+                try:
+                    import shutil
+                    shutil.rmtree(self.temp_dir, ignore_errors=True)
+                    logger.info(f"Cleaned up temp directory: {self.temp_dir}")
+                except Exception as e:
+                    logger.warning(f"Failed to remove temp directory: {e}")
+                    
+                logger.info("Cleaned up video processor resources")
         except Exception as e:
             logger.warning(f"Cleanup warning: {e}")

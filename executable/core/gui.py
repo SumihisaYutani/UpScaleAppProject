@@ -111,9 +111,11 @@ class ProcessingStepTracker:
 class ProgressDialog:
     """Progress dialog for processing operations"""
     
-    def __init__(self, parent):
+    def __init__(self, parent, temp_dir=None):
         self.parent = parent
         self.step_tracker = ProcessingStepTracker()
+        self.temp_dir = temp_dir  # Store temp directory for cleanup
+        self.video_processor = None  # Store video processor reference for cleanup
         
         if GUI_AVAILABLE and ctk:
             # Use CustomTkinter
@@ -525,6 +527,9 @@ class ProgressDialog:
         except:
             pass
         
+        # Clean up temporary files
+        self._cleanup_temp_files()
+        
         # Close progress dialog after short delay
         def close_dialog():
             try:
@@ -536,6 +541,49 @@ class ProgressDialog:
             self.window.after(2000, close_dialog)
         else:
             self.window.after(2000, close_dialog)
+    
+    def _cleanup_temp_files(self):
+        """Clean up temporary files and directories"""
+        import shutil
+        
+        try:
+            # Clean up video processor if available
+            if self.video_processor:
+                self.video_processor.cleanup()
+            
+            # Clean up temp directory if provided
+            if self.temp_dir and os.path.exists(self.temp_dir):
+                try:
+                    # Remove all files in temp directory
+                    shutil.rmtree(self.temp_dir, ignore_errors=True)
+                    logger.info(f"Cleaned up temp directory: {self.temp_dir}")
+                except Exception as e:
+                    logger.warning(f"Failed to clean up temp directory: {e}")
+                    
+            # Additional cleanup for Windows temp files
+            if os.name == 'nt':
+                try:
+                    import tempfile
+                    temp_root = tempfile.gettempdir()
+                    
+                    # Look for upscale related temp directories
+                    for item in os.listdir(temp_root):
+                        item_path = os.path.join(temp_root, item)
+                        if os.path.isdir(item_path) and ('upscale' in item.lower() or 'tmp' in item.lower()):
+                            # Check if directory contains frame files or is recent
+                            try:
+                                files = os.listdir(item_path)
+                                if any(f.startswith('frame_') and f.endswith('.png') for f in files):
+                                    shutil.rmtree(item_path, ignore_errors=True)
+                                    logger.info(f"Cleaned up orphaned temp directory: {item_path}")
+                            except:
+                                pass
+                                
+                except Exception as e:
+                    logger.warning(f"Additional temp cleanup failed: {e}")
+                    
+        except Exception as e:
+            logger.warning(f"Temp file cleanup failed: {e}")
         
     def destroy(self):
         """Destroy progress dialog"""
@@ -1173,10 +1221,20 @@ Additional GPUs: +{additional_count} more"""
             progress_dialog = None
             
             try:
+                # Create temporary directory
+                import tempfile
+                temp_dir = tempfile.mkdtemp(prefix='upscale_app_')
+                
+                # Update video processor temp directory
+                self.video_processor.temp_dir = Path(temp_dir)
+                self.video_processor.frame_dir = self.video_processor.temp_dir / "frames"
+                self.video_processor.frame_dir.mkdir(exist_ok=True)
+                
                 # Show progress dialog immediately on GUI thread
                 def create_progress_dialog():
                     nonlocal progress_dialog
-                    progress_dialog = ProgressDialog(self.root)
+                    progress_dialog = ProgressDialog(self.root, temp_dir=temp_dir)
+                    progress_dialog.video_processor = self.video_processor  # Pass reference for cleanup
                     progress_dialog.add_log_message("Initializing video processing...")
                     progress_dialog.update_progress(0, "Starting processing...")
                 
@@ -1312,6 +1370,8 @@ Additional GPUs: +{additional_count} more"""
         
     def _on_processing_complete(self, output_path, progress_dialog):
         """Handle processing completion"""
+        # Clean up temporary files before closing dialog
+        progress_dialog._cleanup_temp_files()
         progress_dialog.destroy()
         
         self.is_processing = False
@@ -1333,6 +1393,8 @@ Additional GPUs: +{additional_count} more"""
         
     def _on_processing_error(self, error_msg, progress_dialog):
         """Handle processing error"""
+        # Clean up temporary files before closing dialog
+        progress_dialog._cleanup_temp_files()
         progress_dialog.destroy()
         
         self.is_processing = False
@@ -1348,6 +1410,14 @@ Additional GPUs: +{additional_count} more"""
             messagebox.showerror("Processing Error", f"Processing failed:\\n\\n{error_msg}")
         
         self._add_status_message(f"Processing failed: {error_msg}")
+        
+    def __del__(self):
+        """Destructor to ensure cleanup on application exit"""
+        try:
+            if hasattr(self, 'video_processor') and self.video_processor:
+                self.video_processor.cleanup()
+        except:
+            pass
         
     def run(self) -> int:
         """Run the GUI application"""
