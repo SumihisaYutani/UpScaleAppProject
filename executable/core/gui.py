@@ -641,7 +641,28 @@ class MainGUI:
             style = ttk.Style()
             style.theme_use('clam')  # Modern looking theme
         
+        # Setup window close handler
+        self.root.protocol("WM_DELETE_WINDOW", self._on_window_close)
+        
         self._setup_ui()
+    
+    def _on_window_close(self):
+        """Handle window close event"""
+        try:
+            # Cancel any ongoing processing
+            if hasattr(self, 'processing_cancelled'):
+                self.processing_cancelled = True
+            
+            # Cleanup and close
+            self.cleanup()
+            
+            # Force exit if needed
+            import sys
+            sys.exit(0)
+        except:
+            # Force exit as last resort
+            import os
+            os._exit(0)
         
     def _setup_ui(self):
         """Setup main user interface"""
@@ -656,6 +677,9 @@ class MainGUI:
             
             # File selection section
             self._setup_file_section(self.main_frame)
+            
+            # Video information section
+            self._setup_video_info_section(self.main_frame)
             
             # Settings section  
             self._setup_settings_section(self.main_frame)
@@ -691,6 +715,9 @@ class MainGUI:
             
             # File selection section
             self._setup_file_section(scrollable_frame)
+            
+            # Video information section
+            self._setup_video_info_section(scrollable_frame)
             
             # Settings section  
             self._setup_settings_section(scrollable_frame)
@@ -829,6 +856,52 @@ class MainGUI:
             ).grid(row=0, column=1)
             
             file_frame.columnconfigure(1, weight=1)
+        
+    def _setup_video_info_section(self, parent):
+        """Setup video information display section"""
+        if GUI_AVAILABLE and ctk:
+            # CustomTkinter implementation
+            info_frame = ctk.CTkFrame(parent)
+            info_frame.pack(fill="x", padx=10, pady=10)
+            
+            info_label = ctk.CTkLabel(info_frame, text="📹 動画情報", font=ctk.CTkFont(size=16, weight="bold"))
+            info_label.pack(anchor="w", padx=15, pady=(15, 10))
+            
+            # Video info container
+            self.video_info_container = ctk.CTkFrame(info_frame)
+            self.video_info_container.pack(fill="x", padx=15, pady=(0, 15))
+            
+            # Initially hidden message
+            self.video_info_placeholder = ctk.CTkLabel(
+                self.video_info_container, 
+                text="動画ファイルを選択すると、詳細情報が表示されます。",
+                font=ctk.CTkFont(size=12),
+                text_color="gray"
+            )
+            self.video_info_placeholder.pack(pady=10)
+            
+            # Video info labels (initially hidden)
+            self.video_info_labels = {}
+            
+        else:
+            # Standard tkinter fallback
+            info_frame = ttk.LabelFrame(parent, text="動画情報", padding=15)
+            info_frame.pack(fill="x", padx=20, pady=10)
+            
+            # Video info container
+            self.video_info_container = ttk.Frame(info_frame)
+            self.video_info_container.pack(fill="x")
+            
+            # Initially hidden message
+            self.video_info_placeholder = ttk.Label(
+                self.video_info_container, 
+                text="動画ファイルを選択すると、詳細情報が表示されます。",
+                foreground="gray"
+            )
+            self.video_info_placeholder.pack(pady=10)
+            
+            # Video info labels (initially hidden)
+            self.video_info_labels = {}
         
     def _setup_settings_section(self, parent):
         """Setup settings section"""
@@ -1126,6 +1199,9 @@ Additional GPUs: +{additional_count} more"""
             self.input_entry.insert(0, file_path)
             # Note: self.input_entry.see(0) not available in tkinter Entry
             
+            # Display video information
+            self._display_video_info(file_path)
+            
             # Force focus and refresh
             self.input_entry.focus_set()
             self.input_entry.focus_force()
@@ -1277,9 +1353,14 @@ Additional GPUs: +{additional_count} more"""
                 self._safe_gui_update(lambda: progress_dialog.update_step_progress("validate", 100, "complete"))
                 self._safe_gui_update(lambda: progress_dialog.add_log_message(f"動画情報: {video_info['width']}x{video_info['height']}, {video_info['duration']:.1f}秒"))
                 
+                self._safe_gui_update(lambda: progress_dialog.add_log_message(f"DEBUG: Video validation complete. Frames: {video_info.get('frame_count', 'unknown')}"))
+                self._safe_gui_update(lambda: progress_dialog.add_log_message("DEBUG: About to start frame extraction step"))
+                
                 # Step 2: Extract frames
                 self._safe_gui_update(lambda: progress_dialog.update_step_progress("extract", 0, "start"))
                 progress_callback(10, "フレーム抽出中...")
+                
+                self._safe_gui_update(lambda: progress_dialog.add_log_message("DEBUG: Frame extraction step initialized"))
                 
                 def extract_progress_callback(progress, message):
                     # Map extraction progress to step progress (0-100)
@@ -1287,7 +1368,17 @@ Additional GPUs: +{additional_count} more"""
                     self._safe_gui_update(lambda: progress_dialog.update_step_progress("extract", step_progress))
                     progress_callback(5 + (progress * 0.1), message)  # 5-15% overall
                 
+                self._safe_gui_update(lambda: progress_dialog.add_log_message(f"DEBUG: About to call extract_frames with: {input_path}"))
+                self._safe_gui_update(lambda: progress_dialog.add_log_message(f"DEBUG: Video processor: {type(self.video_processor).__name__}"))
+                self._safe_gui_update(lambda: progress_dialog.add_log_message(f"DEBUG: Method exists: {hasattr(self.video_processor, 'extract_frames')}"))
+                
+                # Add a small delay to ensure GUI updates are processed
+                import time
+                time.sleep(0.1)
+                
                 frame_paths = self.video_processor.extract_frames(input_path, extract_progress_callback, progress_dialog)
+                
+                self._safe_gui_update(lambda: progress_dialog.add_log_message(f"DEBUG: extract_frames returned: {len(frame_paths) if frame_paths else 0} frames"))
                 
                 if not frame_paths:
                     self._safe_gui_update(lambda: progress_dialog.update_step_progress("extract", 0, "error"))
@@ -1295,6 +1386,10 @@ Additional GPUs: +{additional_count} more"""
                 
                 self._safe_gui_update(lambda: progress_dialog.update_step_progress("extract", 100, "complete"))
                 self._safe_gui_update(lambda: progress_dialog.add_log_message(f"フレーム抽出完了: {len(frame_paths)}枚"))
+                
+                # Memory cleanup after frame extraction
+                progress_callback(16, "メモリクリーンアップ中...")
+                self.video_processor.cleanup_memory_between_operations()
                 
                 # Step 3: Upscale frames
                 self._safe_gui_update(lambda: progress_dialog.update_step_progress("upscale", 0, "start"))
@@ -1310,7 +1405,8 @@ Additional GPUs: +{additional_count} more"""
                     frame_paths, 
                     str(self.video_processor.temp_dir / "upscaled"),
                     scale_factor,
-                    upscale_progress_callback
+                    upscale_progress_callback,
+                    progress_dialog
                 )
                 
                 if not upscaled_frames:
@@ -1319,6 +1415,11 @@ Additional GPUs: +{additional_count} more"""
                 
                 self._safe_gui_update(lambda: progress_dialog.update_step_progress("upscale", 100, "complete"))
                 self._safe_gui_update(lambda: progress_dialog.add_log_message(f"AIアップスケーリング完了: {len(upscaled_frames)}枚"))
+                
+                # Memory cleanup after AI upscaling
+                progress_callback(87, "メモリクリーンアップ中...")
+                self.ai_processor._cleanup_memory_between_batches()
+                self.video_processor.cleanup_memory_between_operations()
                 
                 # Step 4: Combine to video
                 self._safe_gui_update(lambda: progress_dialog.update_step_progress("combine", 0, "start"))
@@ -1446,7 +1547,109 @@ Additional GPUs: +{additional_count} more"""
     def cleanup(self):
         """Cleanup GUI resources"""
         try:
+            # Cancel any ongoing processing
+            if hasattr(self, 'processing_cancelled'):
+                self.processing_cancelled = True
+            
+            # Stop any running threads/processes
+            if hasattr(self, 'video_processor') and self.video_processor:
+                self.video_processor.cleanup()
+            
+            # Destroy GUI safely
             if self.root:
-                self.root.quit()
+                try:
+                    self.root.quit()
+                    self.root.destroy()
+                except:
+                    pass
         except:
             pass
+    
+    def _display_video_info(self, file_path):
+        """Display video information when file is selected"""
+        try:
+            # Validate video and get information
+            video_info = self.video_processor.validate_video(file_path)
+            
+            # Clear existing info labels
+            for label in self.video_info_labels.values():
+                label.destroy()
+            self.video_info_labels.clear()
+            
+            if video_info['valid']:
+                info = video_info['info']
+                
+                # Hide placeholder
+                self.video_info_placeholder.pack_forget()
+                
+                # Prepare info data
+                info_data = [
+                    ("ファイル名", info['filename']),
+                    ("解像度", f"{info['width']} × {info['height']}"),
+                    ("時間", f"{info['duration']:.1f} 秒"),
+                    ("フレームレート", f"{info['frame_rate']:.2f} fps"),
+                    ("フレーム数", f"{info['frame_count']:,} フレーム"),
+                    ("コーデック", info['codec_name']),
+                    ("ファイルサイズ", f"{info['size'] / (1024*1024):.1f} MB"),
+                    ("フォーマット", info['format'])
+                ]
+                
+                if GUI_AVAILABLE and ctk:
+                    # CustomTkinter version
+                    for i, (label_text, value_text) in enumerate(info_data):
+                        row_frame = ctk.CTkFrame(self.video_info_container)
+                        row_frame.pack(fill="x", padx=5, pady=2)
+                        
+                        label = ctk.CTkLabel(
+                            row_frame, 
+                            text=f"{label_text}:", 
+                            font=ctk.CTkFont(size=12, weight="bold"),
+                            width=100,
+                            anchor="w"
+                        )
+                        label.pack(side="left", padx=(10, 5), pady=5)
+                        
+                        value = ctk.CTkLabel(
+                            row_frame, 
+                            text=str(value_text),
+                            font=ctk.CTkFont(size=12),
+                            anchor="w"
+                        )
+                        value.pack(side="left", padx=(5, 10), pady=5, fill="x", expand=True)
+                        
+                        self.video_info_labels[f"row_{i}"] = row_frame
+                        
+                else:
+                    # Standard tkinter version
+                    for i, (label_text, value_text) in enumerate(info_data):
+                        row_frame = ttk.Frame(self.video_info_container)
+                        row_frame.pack(fill="x", pady=2)
+                        
+                        label = ttk.Label(
+                            row_frame, 
+                            text=f"{label_text}:",
+                            font=("TkDefaultFont", 9, "bold"),
+                            width=15,
+                            anchor="w"
+                        )
+                        label.pack(side="left", padx=(5, 5))
+                        
+                        value = ttk.Label(
+                            row_frame, 
+                            text=str(value_text),
+                            anchor="w"
+                        )
+                        value.pack(side="left", padx=(5, 5), fill="x", expand=True)
+                        
+                        self.video_info_labels[f"row_{i}"] = row_frame
+                        
+            else:
+                # Show error message
+                self.video_info_placeholder.configure(text=f"エラー: {video_info['error']}")
+                self.video_info_placeholder.pack(pady=10)
+                
+        except Exception as e:
+            logger.warning(f"Failed to display video info: {e}")
+            # Show placeholder with error
+            self.video_info_placeholder.configure(text="動画情報の取得に失敗しました。")
+            self.video_info_placeholder.pack(pady=10)

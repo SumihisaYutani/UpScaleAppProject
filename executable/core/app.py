@@ -12,10 +12,10 @@ from pathlib import Path
 from typing import Optional, Dict, Any
 import tkinter as tk
 
-# Configure logging
+# Configure logging for debug version
 logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s'
+    level=logging.DEBUG,
+    format='%(asctime)s - %(levelname)s - %(name)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
 

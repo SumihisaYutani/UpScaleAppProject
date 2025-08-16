@@ -27,19 +27,23 @@ AI_SETTINGS = {
     "preferred_method": "auto"  # "auto", "waifu2x", "stable_diffusion", "simple"
 }
 
-# Waifu2x specific settings
+# Waifu2x specific settings - Optimized based on xyle-official recommendations
 WAIFU2X_SETTINGS = {
-    "backend": "auto",  # "auto", "amd", "ncnn", "chainer"
+    "backend": "amd",  # Force AMD backend for Radeon RX Vega
     "gpu_id": 0,  # GPU device ID (0 for first GPU, -1 for CPU)
-    "scale": 2,  # Scaling factor (1, 2, 4, 8, 16, 32 for ncnn)
-    "noise": 1,  # Noise reduction level (-1: none, 0-3: weak to strong)
+    "scale": 2,  # Scaling factor (xyle-official recommended: 2x)
+    "noise": 3,  # Strong noise reduction (xyle-official recommended: 3)
     "model": "models-cunet",  # Model type for backend
-    "tile_size": 512,  # Tile size for processing large images
-    "tile_pad": 10,  # Padding for tiles
+    "tile_size": 400,  # Optimal tile size (xyle-official recommended: 400)
+    "tile_pad": 16,  # Increased padding for better quality
     # AMD GPU specific settings
-    "amd_backend_type": "auto",  # "auto", "rocm", "vulkan"
+    "amd_backend_type": "vulkan",  # Use Vulkan for better AMD performance
     "amd_optimize": True,  # Apply AMD-specific optimizations
-    "amd_memory_fraction": 0.9  # Memory fraction for ROCm backend
+    "amd_memory_fraction": 0.95,  # Increase memory usage for RX Vega
+    "threads": 8,  # Multi-threading for CPU preprocessing
+    "batch_size": 8,  # Increased batch size for better GPU utilization
+    # Processing optimization
+    "load_proc_save_threads": "1:8:4"  # Optimized thread allocation
 }
 
 # File paths
@@ -50,11 +54,15 @@ PATHS = {
     "logs_dir": BASE_DIR / "logs"
 }
 
-# Performance settings
+# Performance settings - Optimized for AMD Radeon RX Vega
 PERFORMANCE = {
-    "max_memory_gb": 8,
-    "max_concurrent_frames": 10,
-    "cleanup_temp_files": True
+    "max_memory_gb": 12,  # Increase for better caching
+    "max_concurrent_frames": 16,  # More parallel processing
+    "cleanup_temp_files": True,
+    "gpu_memory_fraction": 0.95,  # Use most of GPU memory
+    "cpu_threads": 8,  # Multi-threading for preprocessing
+    "enable_gpu_acceleration": True,
+    "vulkan_device_id": 0  # Primary AMD GPU
 }
 
 # Logging settings

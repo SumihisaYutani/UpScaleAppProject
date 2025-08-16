@@ -7,6 +7,8 @@ Version: 2.0.0 (Executable Edition)
 
 import sys
 import os
+import atexit
+import signal
 from pathlib import Path
 import tkinter as tk
 from tkinter import messagebox
@@ -49,8 +51,33 @@ def show_startup_error(message):
     messagebox.showerror("UpScale App - Startup Error", message)
     root.destroy()
 
+# Global application instance for cleanup
+_app_instance = None
+
+def cleanup_on_exit():
+    """Cleanup function called on exit"""
+    global _app_instance
+    if _app_instance:
+        try:
+            _app_instance.cleanup()
+        except:
+            pass
+
+def signal_handler(signum, frame):
+    """Handle signals for clean shutdown"""
+    global _app_instance
+    print(f"Received signal {signum}, shutting down...")
+    if _app_instance:
+        try:
+            _app_instance.cleanup()
+        except:
+            pass
+    sys.exit(0)
+
 def main():
     """Main application entry point"""
+    global _app_instance
+    
     try:
         print("UpScale App - Executable Edition v2.0.0")
         print(f"Bundle Directory: {BUNDLE_DIR}")
@@ -63,6 +90,18 @@ def main():
         print("Resource Directory: " + str(RESOURCE_DIR))
         print("Running Mode: " + ('Executable' if IS_EXECUTABLE else 'Script'))
     
+    # Setup cleanup handlers
+    atexit.register(cleanup_on_exit)
+    
+    # Setup signal handlers (Windows supports SIGINT and SIGTERM)
+    try:
+        signal.signal(signal.SIGINT, signal_handler)
+        signal.signal(signal.SIGTERM, signal_handler)
+        if hasattr(signal, 'SIGBREAK'):  # Windows specific
+            signal.signal(signal.SIGBREAK, signal_handler)
+    except:
+        pass  # Some signals may not be available
+    
     # Check system requirements
     requirements_ok, error_msg = check_system_requirements()
     if not requirements_ok:
@@ -74,8 +113,12 @@ def main():
         from core.app import UpScaleApp
         
         # Create and run application
-        app = UpScaleApp()
-        return app.run()
+        _app_instance = UpScaleApp()
+        result = _app_instance.run()
+        
+        # Ensure cleanup
+        _app_instance.cleanup()
+        return result
         
     except ImportError as e:
         error_msg = f"Failed to import required modules:\n{e}\n\nThis may indicate a packaging issue."
@@ -90,6 +133,14 @@ def main():
         traceback.print_exc()
         show_startup_error(error_msg)
         return 1
+    
+    finally:
+        # Final cleanup
+        if _app_instance:
+            try:
+                _app_instance.cleanup()
+            except:
+                pass
 
 if __name__ == "__main__":
     sys.exit(main())

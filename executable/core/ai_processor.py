@@ -7,6 +7,7 @@ import os
 import tempfile
 import subprocess
 import logging
+import psutil
 from pathlib import Path
 from typing import Dict, List, Optional, Any, Callable
 from PIL import Image
@@ -58,8 +59,8 @@ class AIProcessor:
     
     def upscale_frames(self, frame_paths: List[str], output_dir: str, 
                       scale_factor: float = 2.0,
-                      progress_callback: Optional[Callable] = None) -> List[str]:
-        """Upscale a list of frame images"""
+                      progress_callback: Optional[Callable] = None, progress_dialog=None) -> List[str]:
+        """Upscale a list of frame images with memory management"""
         
         if not self.backend:
             raise RuntimeError("No AI backend available")
@@ -70,32 +71,92 @@ class AIProcessor:
         processed_frames = []
         total_frames = len(frame_paths)
         
-        logger.info(f"Processing {total_frames} frames with {type(self.backend).__name__}")
+        # Add GPU debug information
+        backend_info = self.get_backend_info()
+        if progress_dialog:
+            progress_dialog.window.after(0, lambda: progress_dialog.add_log_message(f"DEBUG: AI Backend: {type(self.backend).__name__}"))
+            progress_dialog.window.after(0, lambda: progress_dialog.add_log_message(f"DEBUG: GPU Mode: {backend_info.get('gpu_mode', False)}"))
+            progress_dialog.window.after(0, lambda: progress_dialog.add_log_message(f"DEBUG: Best Backend: {self.best_backend}"))
+            if isinstance(self.backend, Waifu2xExecutableBackend):
+                progress_dialog.window.after(0, lambda: progress_dialog.add_log_message(f"DEBUG: Waifu2x GPU ID: {self.backend.gpu_id}"))
+                progress_dialog.window.after(0, lambda: progress_dialog.add_log_message(f"DEBUG: Waifu2x Path: {self.backend.waifu2x_path}"))
         
-        for i, frame_path in enumerate(frame_paths):
-            try:
-                # Generate output path
-                frame_name = Path(frame_path).stem
-                output_path = output_dir / f"{frame_name}_upscaled.png"
-                
-                # Upscale frame
-                success = self.backend.upscale_image(frame_path, str(output_path), scale_factor)
-                
-                if success:
-                    processed_frames.append(str(output_path))
-                else:
-                    logger.warning(f"Failed to upscale frame: {frame_path}")
-                
-                # Update progress
-                if progress_callback:
-                    progress = (i + 1) / total_frames * 100
-                    progress_callback(progress, f"Processed frame {i+1}/{total_frames}")
+        logger.info(f"Processing {total_frames} frames with {type(self.backend).__name__}")
+        logger.info(f"DEBUG: AI Backend: {type(self.backend).__name__}")
+        logger.info(f"DEBUG: GPU Mode: {backend_info.get('gpu_mode', False)}")
+        logger.info(f"DEBUG: Best Backend: {self.best_backend}")
+        
+        # Process frames in batches to manage memory usage
+        batch_size = 100  # Process 100 frames before memory cleanup
+        
+        for batch_start in range(0, total_frames, batch_size):
+            batch_end = min(batch_start + batch_size, total_frames)
+            batch_frames = frame_paths[batch_start:batch_end]
+            
+            logger.info(f"Processing batch {batch_start//batch_size + 1}: frames {batch_start+1} to {batch_end}")
+            
+            for i, frame_path in enumerate(batch_frames):
+                try:
+                    global_index = batch_start + i
                     
-            except Exception as e:
-                logger.error(f"Error processing frame {frame_path}: {e}")
+                    # Generate output path
+                    frame_name = Path(frame_path).stem
+                    output_path = output_dir / f"{frame_name}_upscaled.png"
+                    
+                    # Upscale frame with debug info
+                    if progress_dialog and global_index < 5:  # Debug first 5 frames
+                        progress_dialog.window.after(0, lambda idx=global_index, path=frame_path: progress_dialog.add_log_message(f"DEBUG: Processing frame {idx + 1}: {Path(path).name}"))
+                    
+                    success = self.backend.upscale_image(frame_path, str(output_path), scale_factor, progress_dialog=progress_dialog if global_index < 3 else None)
+                    
+                    if success:
+                        processed_frames.append(str(output_path))
+                        if progress_dialog and global_index < 3:  # Debug first 3 successful frames
+                            progress_dialog.window.after(0, lambda idx=global_index: progress_dialog.add_log_message(f"DEBUG: Frame {idx + 1} upscaled successfully"))
+                    else:
+                        logger.warning(f"Failed to upscale frame: {frame_path}")
+                        if progress_dialog and global_index < 3:
+                            progress_dialog.window.after(0, lambda idx=global_index: progress_dialog.add_log_message(f"DEBUG: Frame {idx + 1} upscaling failed"))
+                    
+                    # Update progress
+                    if progress_callback:
+                        progress = (global_index + 1) / total_frames * 100
+                        progress_callback(progress, f"Processed frame {global_index+1}/{total_frames}")
+                        
+                except Exception as e:
+                    logger.error(f"Error processing frame {frame_path}: {e}")
+            
+            # Memory cleanup between batches
+            self._cleanup_memory_between_batches()
         
         logger.info(f"Successfully processed {len(processed_frames)}/{total_frames} frames")
         return processed_frames
+    
+    def _cleanup_memory_between_batches(self):
+        """Clean up memory between frame processing batches"""
+        try:
+            import gc
+            import psutil
+            import os
+            
+            # Force garbage collection
+            gc.collect()
+            
+            # Log memory usage
+            process = psutil.Process(os.getpid())
+            memory_info = process.memory_info()
+            memory_mb = memory_info.rss / 1024 / 1024
+            logger.info(f"Memory usage between batches: {memory_mb:.1f} MB")
+            
+            # Kill any stray waifu2x processes that might be consuming memory
+            self._kill_waifu2x_processes()
+            
+            # Small delay to allow system to stabilize
+            import time
+            time.sleep(0.5)
+            
+        except Exception as e:
+            logger.warning(f"Memory cleanup between batches warning: {e}")
     
     def get_backend_info(self) -> Dict[str, Any]:
         """Get information about the active backend"""
@@ -105,8 +166,27 @@ class AIProcessor:
     
     def cleanup(self):
         """Clean up AI processor resources"""
-        if self.backend:
-            self.backend.cleanup()
+        try:
+            # Kill any running waifu2x processes
+            self._kill_waifu2x_processes()
+            
+            if self.backend:
+                self.backend.cleanup()
+        except Exception as e:
+            logger.warning(f"AI processor cleanup error: {e}")
+    
+    def _kill_waifu2x_processes(self):
+        """Kill any running waifu2x processes"""
+        try:
+            for proc in psutil.process_iter(['pid', 'name']):
+                if proc.info['name'] and 'waifu2x' in proc.info['name'].lower():
+                    try:
+                        proc.kill()
+                        logger.info(f"Killed waifu2x process: {proc.info['pid']}")
+                    except:
+                        pass
+        except:
+            pass
 
 class Waifu2xExecutableBackend:
     """Waifu2x backend using executable binary"""
@@ -138,9 +218,9 @@ class Waifu2xExecutableBackend:
         # return -1  # CPU mode
     
     def _get_optimal_tile_size(self) -> int:
-        """Get optimal tile size for GPU (equivalent to BLOCKSIZE)"""
-        # Radeon RX Vega has 8GB HBM2 memory
-        # Start with conservative value and can be increased
+        """Get optimal tile size for GPU based on xyle-official recommendations"""
+        # Based on https://xyle-official.com/2020/03/23/waifu2x_upscale/
+        # Recommended tile size: 400 for optimal GPU utilization
         gpu_name = "unknown"
         try:
             gpu_name = self.gpu_info.get('amd', {}).get('gpus', [{}])[0].get('name', 'unknown').lower()
@@ -148,14 +228,14 @@ class Waifu2xExecutableBackend:
             pass
         
         if 'vega' in gpu_name:
-            # Radeon RX Vega: Optimized based on test results - 256 is fastest
-            logger.info("Using optimized tile size 256 for Radeon RX Vega (tested optimal)")
-            return 256
-        elif 'rx' in gpu_name:
-            # Other RX series: moderate tile size
-            return 256
+            # Radeon RX Vega: Use recommended 400 for better GPU utilization
+            logger.info("Using optimized tile size 400 for Radeon RX Vega (xyle-official recommended)")
+            return 400
+        elif 'rx' in gpu_name or self.gpu_info.get('nvidia', {}).get('available'):
+            # Other discrete GPUs: use recommended size
+            return 400
         else:
-            # Conservative default for unknown AMD GPUs
+            # Conservative for integrated GPUs
             return 256
     
     def is_available(self) -> bool:
@@ -195,7 +275,7 @@ class Waifu2xExecutableBackend:
             logger.warning(f"Waifu2x availability check failed: {e}")
             return False
     
-    def upscale_image(self, input_path: str, output_path: str, scale_factor: float = 2.0) -> bool:
+    def upscale_image(self, input_path: str, output_path: str, scale_factor: float = 2.0, progress_dialog=None) -> bool:
         """Upscale single image using Waifu2x"""
         try:
             if not self.waifu2x_path:
@@ -204,8 +284,8 @@ class Waifu2xExecutableBackend:
             # Convert scale factor to integer (Waifu2x supports 1, 2, 4, 8, 16, 32)
             scale_int = max(1, min(32, int(scale_factor)))
             
-            # Optimize tile size for Radeon RX Vega (equivalent to BLOCKSIZE)
-            # Start with conservative 256, can be increased to 512, 1024+ based on GPU memory
+            # Optimize based on xyle-official recommendations
+            # https://xyle-official.com/2020/03/23/waifu2x_upscale/
             tile_size = self._get_optimal_tile_size()
             
             cmd = [
@@ -213,14 +293,19 @@ class Waifu2xExecutableBackend:
                 '-i', input_path,
                 '-o', output_path,
                 '-s', str(scale_int),
-                '-n', '1',  # Noise reduction level
+                '-n', '3',  # Strong noise reduction (xyle-official recommended)
                 '-g', '0',  # Force GPU 0 (Radeon RX Vega) explicitly
-                '-m', 'models-cunet',  # Model type
+                '-m', str(Path(self.waifu2x_path).parent / 'models-cunet'),  # Full model path
                 '-f', 'png',  # Output format
-                '-t', str(tile_size),  # Optimized tile size for GPU memory
-                '-j', '1:4:2',  # load:proc:save threads (optimized for GPU)
+                '-t', str(tile_size),  # Optimized tile size (400 recommended)
+                '-j', '1:8:4',  # Increased processing threads for better GPU utilization
                 '-v'  # Verbose output for debugging
             ]
+            
+            # Debug waifu2x command for first few frames
+            if progress_dialog:
+                progress_dialog.window.after(0, lambda: progress_dialog.add_log_message(f"DEBUG: Waifu2x command: {' '.join(cmd)}"))
+                progress_dialog.window.after(0, lambda: progress_dialog.add_log_message(f"DEBUG: GPU ID: {self.gpu_id}, Tile size: {tile_size}"))
             
             # Hide console window on Windows
             startupinfo = None
@@ -237,6 +322,14 @@ class Waifu2xExecutableBackend:
                 timeout=120,  # 2 minute timeout per image
                 startupinfo=startupinfo
             )
+            
+            # Debug waifu2x output for first few frames
+            if progress_dialog:
+                progress_dialog.window.after(0, lambda: progress_dialog.add_log_message(f"DEBUG: Waifu2x return code: {result.returncode}"))
+                if result.stderr:
+                    progress_dialog.window.after(0, lambda: progress_dialog.add_log_message(f"DEBUG: Waifu2x stderr: {result.stderr[:200]}"))
+                if result.stdout:
+                    progress_dialog.window.after(0, lambda: progress_dialog.add_log_message(f"DEBUG: Waifu2x stdout: {result.stdout[:200]}"))
             
             if result.returncode != 0:
                 logger.debug(f"Waifu2x failed: {result.stderr}")
@@ -276,7 +369,7 @@ class SimpleUpscalingBackend:
         """Simple upscaling is always available"""
         return True
     
-    def upscale_image(self, input_path: str, output_path: str, scale_factor: float = 2.0) -> bool:
+    def upscale_image(self, input_path: str, output_path: str, scale_factor: float = 2.0, progress_dialog=None) -> bool:
         """Simple upscaling using PIL"""
         try:
             with Image.open(input_path) as img:
