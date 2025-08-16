@@ -23,6 +23,8 @@ except ImportError:
     ctk = None
 
 from .utils import ProgressCallback, SimpleTimer, format_duration
+from .session_manager import SessionManager
+from .resume_dialog import ResumeDialog, SessionSelectionDialog
 
 logger = logging.getLogger(__name__)
 
@@ -609,6 +611,10 @@ class MainGUI:
         self.video_processor = video_processor
         self.ai_processor = ai_processor  
         self.gpu_info = gpu_info
+        
+        # Initialize session manager
+        self.session_manager = SessionManager()
+        self.current_session_id = None
         
         self.root = None
         self.processing_thread = None
@@ -1202,6 +1208,9 @@ Additional GPUs: +{additional_count} more"""
             # Display video information
             self._display_video_info(file_path)
             
+            # Check for resumable sessions
+            self._check_resumable_sessions(file_path)
+            
             # Force focus and refresh
             self.input_entry.focus_set()
             self.input_entry.focus_force()
@@ -1288,6 +1297,36 @@ Additional GPUs: +{additional_count} more"""
         output_filename = f"{Path(input_path).stem}_upscaled.mp4"
         output_path = str(Path(output_folder) / output_filename)
         
+        # Get video info for session creation
+        video_info = self.video_processor.validate_video(input_path)
+        if not video_info['valid']:
+            if GUI_AVAILABLE and ctk:
+                CTkMessagebox(
+                    title="Error",
+                    message=f"Invalid video file: {video_info['error']}",
+                    icon="cancel"
+                )
+            else:
+                messagebox.showerror("Error", f"Invalid video file: {video_info['error']}")
+            return
+        
+        # Initialize or resume session
+        settings = self._get_current_settings()
+        if not self.current_session_id:
+            # Create new session
+            self.current_session_id = self.session_manager.create_session(
+                input_path, settings, video_info['info']
+            )
+            logger.info(f"Created new session: {self.current_session_id}")
+        else:
+            logger.info(f"Resuming session: {self.current_session_id}")
+        
+        # Update session with output path
+        progress_data = self.session_manager.load_progress(self.current_session_id)
+        if progress_data:
+            progress_data['steps']['combine']['output_path'] = output_path
+            self.session_manager.save_progress(self.current_session_id, progress_data)
+        
         # Get settings
         try:
             scale_factor = float(self.scale_var.get())
@@ -1307,9 +1346,9 @@ Additional GPUs: +{additional_count} more"""
             progress_dialog = None
             
             try:
-                # Create temporary directory
-                import tempfile
-                temp_dir = tempfile.mkdtemp(prefix='upscale_app_')
+                # Use session-specific temp directory
+                session_dir = self.session_manager.get_session_dir(self.current_session_id)
+                temp_dir = str(session_dir)
                 
                 # Update video processor temp directory
                 self.video_processor.temp_dir = Path(temp_dir)
@@ -1340,81 +1379,152 @@ Additional GPUs: +{additional_count} more"""
                     if progress_dialog and progress_dialog.cancelled:
                         raise KeyboardInterrupt("Processing cancelled by user")
                 
-                # Step 1: Validate video
-                self._safe_gui_update(lambda: progress_dialog.update_step_progress("validate", 0, "start"))
-                progress_callback(5, "動画ファイル検証中...")
-                validation = self.video_processor.validate_video(input_path)
+                # Step 1: Validate video (check if we can skip due to resume)
+                progress_data = self.session_manager.load_progress(self.current_session_id)
+                validate_status = progress_data['steps']['validate']['status'] if progress_data else 'pending'
                 
-                if not validation['valid']:
-                    self._safe_gui_update(lambda: progress_dialog.update_step_progress("validate", 0, "error"))
-                    raise RuntimeError(f"Invalid video: {validation['error']}")
-                
-                video_info = validation['info']
-                self._safe_gui_update(lambda: progress_dialog.update_step_progress("validate", 100, "complete"))
+                if validate_status != 'completed':
+                    self._safe_gui_update(lambda: progress_dialog.update_step_progress("validate", 0, "start"))
+                    self.session_manager.update_step_status(self.current_session_id, "validate", "in_progress", 0)
+                    
+                    progress_callback(5, "動画ファイル検証中...")
+                    validation = self.video_processor.validate_video(input_path)
+                    
+                    if not validation['valid']:
+                        self.session_manager.update_step_status(self.current_session_id, "validate", "failed", 0, 
+                                                              {"error": validation['error']})
+                        self._safe_gui_update(lambda: progress_dialog.update_step_progress("validate", 0, "error"))
+                        raise RuntimeError(f"Invalid video: {validation['error']}")
+                    
+                    video_info = validation['info']
+                    self.session_manager.update_step_status(self.current_session_id, "validate", "completed", 100)
+                    self._safe_gui_update(lambda: progress_dialog.update_step_progress("validate", 100, "complete"))
+                else:
+                    # Skip validation - already completed
+                    progress_callback(5, "動画検証完了済み（スキップ）")
+                    video_info = progress_data.get('video_info', {})
                 self._safe_gui_update(lambda: progress_dialog.add_log_message(f"動画情報: {video_info['width']}x{video_info['height']}, {video_info['duration']:.1f}秒"))
                 
                 self._safe_gui_update(lambda: progress_dialog.add_log_message(f"DEBUG: Video validation complete. Frames: {video_info.get('frame_count', 'unknown')}"))
                 self._safe_gui_update(lambda: progress_dialog.add_log_message("DEBUG: About to start frame extraction step"))
                 
-                # Step 2: Extract frames
-                self._safe_gui_update(lambda: progress_dialog.update_step_progress("extract", 0, "start"))
-                progress_callback(10, "フレーム抽出中...")
+                # Step 2: Extract frames (check if we can skip or resume)
+                extract_status = progress_data['steps']['extract']['status'] if progress_data else 'pending'
                 
-                self._safe_gui_update(lambda: progress_dialog.add_log_message("DEBUG: Frame extraction step initialized"))
-                
-                def extract_progress_callback(progress, message):
-                    # Map extraction progress to step progress (0-100)
-                    step_progress = progress
-                    self._safe_gui_update(lambda: progress_dialog.update_step_progress("extract", step_progress))
-                    progress_callback(5 + (progress * 0.1), message)  # 5-15% overall
-                
-                self._safe_gui_update(lambda: progress_dialog.add_log_message(f"DEBUG: About to call extract_frames with: {input_path}"))
-                self._safe_gui_update(lambda: progress_dialog.add_log_message(f"DEBUG: Video processor: {type(self.video_processor).__name__}"))
-                self._safe_gui_update(lambda: progress_dialog.add_log_message(f"DEBUG: Method exists: {hasattr(self.video_processor, 'extract_frames')}"))
-                
-                # Add a small delay to ensure GUI updates are processed
-                import time
-                time.sleep(0.1)
-                
-                frame_paths = self.video_processor.extract_frames(input_path, extract_progress_callback, progress_dialog)
-                
-                self._safe_gui_update(lambda: progress_dialog.add_log_message(f"DEBUG: extract_frames returned: {len(frame_paths) if frame_paths else 0} frames"))
-                
-                if not frame_paths:
-                    self._safe_gui_update(lambda: progress_dialog.update_step_progress("extract", 0, "error"))
-                    raise RuntimeError("Failed to extract frames")
-                
-                self._safe_gui_update(lambda: progress_dialog.update_step_progress("extract", 100, "complete"))
+                if extract_status == 'completed':
+                    # Skip extraction - already completed
+                    progress_callback(15, "フレーム抽出完了済み（スキップ）")
+                    # Load existing frame paths
+                    frame_paths = sorted([str(p) for p in self.video_processor.frame_dir.glob("frame_*.png")])
+                    self._safe_gui_update(lambda: progress_dialog.add_log_message(f"Loaded {len(frame_paths)} existing frames"))
+                    self._safe_gui_update(lambda: progress_dialog.update_step_progress("extract", 100, "complete"))
+                else:
+                    # Need to extract frames
+                    self._safe_gui_update(lambda: progress_dialog.update_step_progress("extract", 0, "start"))
+                    self.session_manager.update_step_status(self.current_session_id, "extract", "in_progress", 0)
+                    progress_callback(10, "フレーム抽出中...")
+                    
+                    self._safe_gui_update(lambda: progress_dialog.add_log_message("DEBUG: Frame extraction step initialized"))
+                    
+                    def extract_progress_callback(progress, message):
+                        # Map extraction progress to step progress (0-100)
+                        step_progress = progress
+                        self.session_manager.update_step_status(self.current_session_id, "extract", "in_progress", step_progress)
+                        self._safe_gui_update(lambda: progress_dialog.update_step_progress("extract", step_progress))
+                        progress_callback(5 + (progress * 0.1), message)  # 5-15% overall
+                    
+                    self._safe_gui_update(lambda: progress_dialog.add_log_message(f"DEBUG: About to call extract_frames with: {input_path}"))
+                    
+                    # Add a small delay to ensure GUI updates are processed
+                    import time
+                    time.sleep(0.1)
+                    
+                    frame_paths = self.video_processor.extract_frames(input_path, extract_progress_callback, progress_dialog)
+                    
+                    self._safe_gui_update(lambda: progress_dialog.add_log_message(f"DEBUG: extract_frames returned: {len(frame_paths) if frame_paths else 0} frames"))
+                    
+                    if not frame_paths:
+                        self.session_manager.update_step_status(self.current_session_id, "extract", "failed", 0, 
+                                                              {"error": "Failed to extract frames"})
+                        self._safe_gui_update(lambda: progress_dialog.update_step_progress("extract", 0, "error"))
+                        raise RuntimeError("Failed to extract frames")
+                    
+                    # Update session with extracted frame count
+                    self.session_manager.update_step_status(self.current_session_id, "extract", "completed", 100,
+                                                          {"extracted_frames": len(frame_paths)})
+                    self._safe_gui_update(lambda: progress_dialog.update_step_progress("extract", 100, "complete"))
                 self._safe_gui_update(lambda: progress_dialog.add_log_message(f"フレーム抽出完了: {len(frame_paths)}枚"))
                 
                 # Memory cleanup after frame extraction
                 progress_callback(16, "メモリクリーンアップ中...")
                 self.video_processor.cleanup_memory_between_operations()
                 
-                # Step 3: Upscale frames
-                self._safe_gui_update(lambda: progress_dialog.update_step_progress("upscale", 0, "start"))
-                progress_callback(20, "AIアップスケーリング実行中...")
+                # Step 3: Upscale frames (with resume support)
+                upscale_status = progress_data['steps']['upscale']['status'] if progress_data else 'pending'
                 
-                def upscale_progress_callback(progress, message):
-                    # Map upscaling progress to step progress (0-100)
-                    step_progress = progress
-                    self._safe_gui_update(lambda: progress_dialog.update_step_progress("upscale", step_progress))
-                    progress_callback(15 + (progress * 0.7), message)  # 15-85% overall
-                
-                upscaled_frames = self.ai_processor.upscale_frames(
-                    frame_paths, 
-                    str(self.video_processor.temp_dir / "upscaled"),
-                    scale_factor,
-                    upscale_progress_callback,
-                    progress_dialog
-                )
-                
-                if not upscaled_frames:
-                    self._safe_gui_update(lambda: progress_dialog.update_step_progress("upscale", 0, "error"))
-                    raise RuntimeError("Failed to upscale frames")
-                
-                self._safe_gui_update(lambda: progress_dialog.update_step_progress("upscale", 100, "complete"))
-                self._safe_gui_update(lambda: progress_dialog.add_log_message(f"AIアップスケーリング完了: {len(upscaled_frames)}枚"))
+                if upscale_status == 'completed':
+                    # Skip upscaling - already completed
+                    progress_callback(85, "AIアップスケーリング完了済み（スキップ）")
+                    # Load existing upscaled frames
+                    upscaled_dir = self.video_processor.temp_dir / "upscaled"
+                    upscaled_frames = sorted([str(p) for p in upscaled_dir.glob("*_upscaled.png")])
+                    self._safe_gui_update(lambda: progress_dialog.add_log_message(f"Loaded {len(upscaled_frames)} existing upscaled frames"))
+                    self._safe_gui_update(lambda: progress_dialog.update_step_progress("upscale", 100, "complete"))
+                else:
+                    # Need to upscale frames (with resume)
+                    self._safe_gui_update(lambda: progress_dialog.update_step_progress("upscale", 0, "start"))
+                    self.session_manager.update_step_status(self.current_session_id, "upscale", "in_progress", 0)
+                    
+                    # Check for existing upscaled frames (resume case)
+                    completed_frames = self.session_manager.get_completed_frames(self.current_session_id)
+                    remaining_frames = self.session_manager.get_remaining_frames(self.current_session_id, frame_paths)
+                    
+                    if completed_frames:
+                        progress_callback(20, f"AIアップスケーリング再開中... ({len(completed_frames)}/{len(frame_paths)} 完了済み)")
+                        self._safe_gui_update(lambda: progress_dialog.add_log_message(f"Resume: {len(completed_frames)} frames already completed, {len(remaining_frames)} remaining"))
+                        
+                        # Calculate resume progress
+                        initial_progress = (len(completed_frames) / len(frame_paths)) * 100
+                        self._safe_gui_update(lambda: progress_dialog.update_step_progress("upscale", initial_progress))
+                    else:
+                        progress_callback(20, "AIアップスケーリング実行中...")
+                        remaining_frames = frame_paths
+                    
+                    def upscale_progress_callback(progress, message):
+                        # Calculate overall progress including completed frames
+                        completed_count = len(completed_frames)
+                        total_count = len(frame_paths)
+                        remaining_count = len(remaining_frames)
+                        
+                        # Progress for remaining frames
+                        remaining_progress = (progress / 100) * remaining_count
+                        overall_progress = ((completed_count + remaining_progress) / total_count) * 100
+                        
+                        self.session_manager.update_step_status(self.current_session_id, "upscale", "in_progress", overall_progress)
+                        self._safe_gui_update(lambda: progress_dialog.update_step_progress("upscale", overall_progress))
+                        progress_callback(15 + (overall_progress * 0.7), message)  # 15-85% overall
+                    
+                    # Process remaining frames only
+                    if remaining_frames:
+                        upscaled_frames = self._upscale_frames_with_resume(
+                            remaining_frames, completed_frames, scale_factor, 
+                            upscale_progress_callback, progress_dialog
+                        )
+                    else:
+                        # All frames already completed
+                        upscaled_dir = self.video_processor.temp_dir / "upscaled"
+                        upscaled_frames = sorted([str(p) for p in upscaled_dir.glob("*_upscaled.png")])
+                    
+                    if not upscaled_frames:
+                        self.session_manager.update_step_status(self.current_session_id, "upscale", "failed", 0,
+                                                              {"error": "Failed to upscale frames"})
+                        self._safe_gui_update(lambda: progress_dialog.update_step_progress("upscale", 0, "error"))
+                        raise RuntimeError("Failed to upscale frames")
+                    
+                    self.session_manager.update_step_status(self.current_session_id, "upscale", "completed", 100,
+                                                          {"completed_frames": upscaled_frames})
+                    self._safe_gui_update(lambda: progress_dialog.update_step_progress("upscale", 100, "complete"))
+                    self._safe_gui_update(lambda: progress_dialog.add_log_message(f"AIアップスケーリング完了: {len(upscaled_frames)}枚"))
                 
                 # Memory cleanup after AI upscaling
                 progress_callback(87, "メモリクリーンアップ中...")
@@ -1481,6 +1591,16 @@ Additional GPUs: +{additional_count} more"""
         
     def _on_processing_complete(self, output_path, progress_dialog):
         """Handle processing completion"""
+        # Mark session as completed
+        if self.current_session_id:
+            self.session_manager.update_step_status(self.current_session_id, "combine", "completed", 100,
+                                                  {"output_path": output_path})
+            
+            # Clean up session after successful completion
+            self.session_manager.cleanup_session(self.current_session_id)
+            self.current_session_id = None
+            logger.info("Session completed successfully and cleaned up")
+        
         # Clean up temporary files before closing dialog
         progress_dialog._cleanup_temp_files()
         progress_dialog.destroy()
@@ -1504,6 +1624,16 @@ Additional GPUs: +{additional_count} more"""
         
     def _on_processing_error(self, error_msg, progress_dialog):
         """Handle processing error"""
+        # Save session state for potential resume (don't clean up on error)
+        if self.current_session_id:
+            # Update session with error info but keep it for resume
+            current_step = self.session_manager._get_current_step(
+                self.session_manager.load_progress(self.current_session_id).get('steps', {})
+            )
+            self.session_manager.update_step_status(self.current_session_id, current_step, "failed", 0,
+                                                  {"error": str(error_msg)})
+            logger.info(f"Session {self.current_session_id} saved for potential resume after error")
+        
         # Clean up temporary files before closing dialog
         progress_dialog._cleanup_temp_files()
         progress_dialog.destroy()
@@ -1525,6 +1655,10 @@ Additional GPUs: +{additional_count} more"""
     def __del__(self):
         """Destructor to ensure cleanup on application exit"""
         try:
+            # Clean up old sessions on app exit
+            if hasattr(self, 'session_manager') and self.session_manager:
+                self.session_manager.cleanup_old_sessions()
+            
             if hasattr(self, 'video_processor') and self.video_processor:
                 self.video_processor.cleanup()
         except:
@@ -1653,3 +1787,124 @@ Additional GPUs: +{additional_count} more"""
             # Show placeholder with error
             self.video_info_placeholder.configure(text="動画情報の取得に失敗しました。")
             self.video_info_placeholder.pack(pady=10)
+    
+    def _check_resumable_sessions(self, file_path: str):
+        """Check for resumable sessions when video file is selected"""
+        try:
+            # Get current settings
+            settings = self._get_current_settings()
+            
+            # Check for resumable session
+            resumable_session = self.session_manager.find_resumable_session(file_path, settings)
+            
+            if resumable_session:
+                logger.info(f"Found resumable session for {Path(file_path).name}")
+                
+                # Show resume dialog
+                resume_dialog = ResumeDialog(self.root, resumable_session)
+                choice = resume_dialog.show()
+                
+                if choice == "resume":
+                    self.current_session_id = resumable_session['session_id']
+                    self._add_status_message("前回のセッションから再開準備完了")
+                    logger.info(f"User chose to resume session {self.current_session_id}")
+                elif choice == "restart":
+                    # Clean up old session
+                    self.session_manager.cleanup_session(resumable_session['session_id'])
+                    self.current_session_id = None
+                    self._add_status_message("新しい処理として開始準備完了")
+                    logger.info("User chose to restart processing")
+                else:
+                    # Cancel - clear session
+                    self.current_session_id = None
+                    logger.info("User cancelled resume dialog")
+            else:
+                # No resumable session found
+                self.current_session_id = None
+                
+        except Exception as e:
+            logger.warning(f"Error checking resumable sessions: {e}")
+            self.current_session_id = None
+    
+    def _get_current_settings(self) -> Dict[str, Any]:
+        """Get current processing settings"""
+        return {
+            'scale_factor': float(self.scale_var.get().replace('x', '')),
+            'quality': self.quality_var.get(),
+            'noise_reduction': 3  # Default value
+        }
+    
+    def _upscale_frames_with_resume(self, remaining_frames: List[str], completed_frames: List[str], 
+                                   scale_factor: float, progress_callback: Callable, 
+                                   progress_dialog) -> List[str]:
+        """Upscale frames with resume functionality"""
+        try:
+            # Create custom progress callback that tracks completed frames
+            def resume_progress_callback(progress, message):
+                # Update session with newly completed frames during processing
+                # This is called by ai_processor during frame processing
+                progress_callback(progress, message)
+            
+            # Custom AI processor call that tracks individual frame completion
+            all_upscaled_frames = self._upscale_with_tracking(
+                remaining_frames, scale_factor, resume_progress_callback, progress_dialog
+            )
+            
+            # Combine with existing completed frames
+            upscaled_dir = self.video_processor.temp_dir / "upscaled"
+            existing_upscaled = [str(p) for p in upscaled_dir.glob("*_upscaled.png")]
+            
+            return sorted(existing_upscaled)
+            
+        except Exception as e:
+            logger.error(f"Error in resume upscaling: {e}")
+            raise
+    
+    def _upscale_with_tracking(self, frame_paths: List[str], scale_factor: float, 
+                              progress_callback: Callable, progress_dialog) -> List[str]:
+        """Upscale frames with individual frame tracking for resume"""
+        output_dir = str(self.video_processor.temp_dir / "upscaled")
+        Path(output_dir).mkdir(parents=True, exist_ok=True)
+        
+        processed_frames = []
+        total_frames = len(frame_paths)
+        
+        for i, frame_path in enumerate(frame_paths):
+            try:
+                # Check for cancellation
+                if progress_dialog and progress_dialog.cancelled:
+                    raise KeyboardInterrupt("Processing cancelled by user")
+                
+                # Generate output path
+                frame_name = Path(frame_path).stem
+                output_path = Path(output_dir) / f"{frame_name}_upscaled.png"
+                
+                # Skip if already exists (safety check)
+                if output_path.exists():
+                    processed_frames.append(str(output_path))
+                    self.session_manager.add_completed_frame(self.current_session_id, str(output_path))
+                    continue
+                
+                # Upscale single frame
+                success = self.ai_processor.backend.upscale_image(
+                    frame_path, str(output_path), scale_factor, 
+                    progress_dialog=progress_dialog if i < 3 else None  # Debug for first 3 frames
+                )
+                
+                if success:
+                    processed_frames.append(str(output_path))
+                    # Update session with completed frame
+                    self.session_manager.add_completed_frame(self.current_session_id, str(output_path))
+                    
+                    # Update progress
+                    frame_progress = ((i + 1) / total_frames) * 100
+                    progress_callback(frame_progress, f"Processed frame {i + 1}/{total_frames}")
+                else:
+                    logger.warning(f"Failed to upscale frame: {frame_path}")
+                
+            except Exception as e:
+                logger.error(f"Error processing frame {frame_path}: {e}")
+                # Continue with next frame instead of failing completely
+                continue
+        
+        return processed_frames
