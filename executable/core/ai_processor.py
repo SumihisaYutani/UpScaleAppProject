@@ -12,8 +12,11 @@ from pathlib import Path
 from typing import Dict, List, Optional, Any, Callable
 from PIL import Image
 import shutil
+import cv2
+import numpy as np
 
 from .utils import ProgressCallback, SimpleTimer
+from .performance_monitor import OptimizedParallelProcessor, PerformanceMonitor
 
 logger = logging.getLogger(__name__)
 
@@ -29,6 +32,10 @@ class AIProcessor:
         self.backend = None
         self._initialize_backend()
         
+        # Initialize parallel processor for optimized performance
+        self.parallel_processor = None
+        self.use_parallel_processing = True  # Enable by default for GPU backends
+        
         logger.info(f"AIProcessor initialized - Backend: {self.best_backend}")
     
     def _initialize_backend(self):
@@ -43,6 +50,10 @@ class AIProcessor:
                 
                 if self.backend.is_available():
                     logger.info(f"Waifu2x backend initialized successfully: {type(self.backend).__name__}")
+                    # Initialize parallel processor for GPU backends
+                    if self.use_parallel_processing:
+                        self.parallel_processor = OptimizedParallelProcessor(self)
+                        logger.info("Parallel processing enabled for optimized GPU utilization")
                     return
                 else:
                     logger.warning("Waifu2x backend not available, falling back to simple upscaling")
@@ -60,7 +71,7 @@ class AIProcessor:
     def upscale_frames(self, frame_paths: List[str], output_dir: str, 
                       scale_factor: float = 2.0,
                       progress_callback: Optional[Callable] = None, progress_dialog=None) -> List[str]:
-        """Upscale a list of frame images with memory management"""
+        """Upscale a list of frame images with optimized parallel processing"""
         
         if not self.backend:
             raise RuntimeError("No AI backend available")
@@ -68,7 +79,6 @@ class AIProcessor:
         output_dir = Path(output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
         
-        processed_frames = []
         total_frames = len(frame_paths)
         
         # Add GPU debug information
@@ -85,6 +95,45 @@ class AIProcessor:
         logger.info(f"DEBUG: AI Backend: {type(self.backend).__name__}")
         logger.info(f"DEBUG: GPU Mode: {backend_info.get('gpu_mode', False)}")
         logger.info(f"DEBUG: Best Backend: {self.best_backend}")
+        
+        # Use parallel processing if available and beneficial
+        if self.parallel_processor and total_frames > 10:
+            if progress_dialog:
+                progress_dialog.window.after(0, lambda: progress_dialog.add_log_message("INFO: Using optimized parallel processing"))
+                # GPU処理開始を通知
+                progress_dialog.window.after(0, lambda: progress_dialog.update_gpu_status(
+                    True, 50, f"Initializing parallel AI processing ({total_frames} frames)"))
+            logger.info("Using optimized parallel processing for improved GPU utilization")
+            
+            processed_frames = self.parallel_processor.process_frames_parallel(
+                frame_paths, str(output_dir), scale_factor, progress_callback, progress_dialog
+            )
+            
+            # Log performance report
+            report = self.parallel_processor.get_performance_report()
+            logger.info(f"Performance Report: {report['throughput_fps']:.2f} fps, "
+                       f"success rate: {report['success_rate']:.1%}")
+            
+            # GPU処理完了を通知
+            if progress_dialog:
+                progress_dialog.window.after(0, lambda: progress_dialog.update_gpu_status(
+                    False, 0, f"AI processing completed! ({report['throughput_fps']:.1f} fps average)"))
+            
+            return processed_frames
+        
+        # Fallback to sequential processing
+        if progress_dialog:
+            progress_dialog.window.after(0, lambda: progress_dialog.add_log_message("INFO: Using sequential processing"))
+        logger.info("Using sequential processing")
+        
+        return self._process_frames_sequential(frame_paths, output_dir, scale_factor, progress_callback, progress_dialog)
+    
+    def _process_frames_sequential(self, frame_paths: List[str], output_dir: Path, 
+                                 scale_factor: float, progress_callback: Optional[Callable], 
+                                 progress_dialog) -> List[str]:
+        """Sequential frame processing (original method)"""
+        processed_frames = []
+        total_frames = len(frame_paths)
         
         # Process frames in batches to manage memory usage
         batch_size = 100  # Process 100 frames before memory cleanup
@@ -288,24 +337,68 @@ class Waifu2xExecutableBackend:
             # https://xyle-official.com/2020/03/23/waifu2x_upscale/
             tile_size = self._get_optimal_tile_size()
             
+            # Get Waifu2x executable directory
+            waifu2x_dir = Path(self.waifu2x_path).parent
+            
+            # Try different model directory structures
+            model_candidates = [
+                # Method 1: Bundle structure (resources/models/models-cunet)
+                (waifu2x_dir.parent.parent / 'models' / 'models-cunet', 'cunet'),
+                (waifu2x_dir.parent.parent / 'models' / 'models-upconv_7_anime_style_art_rgb', 'anime'),
+                # Method 2: Same directory structure (models-cunet)
+                (waifu2x_dir / 'models-cunet', 'cunet_default'),
+                (waifu2x_dir / 'models-upconv_7_anime_style_art_rgb', 'anime_default'),
+                # Method 3: Alternative bundle paths
+                (waifu2x_dir.parent / 'models' / 'models-cunet', 'cunet_alt'),
+                (waifu2x_dir.parent / 'models' / 'models-upconv_7_anime_style_art_rgb', 'anime_alt'),
+            ]
+            
+            model_path = None
+            model_name = None
+            
+            for candidate_path, candidate_name in model_candidates:
+                if candidate_path.exists():
+                    # Verify it contains model files
+                    model_files = list(candidate_path.glob("*.param"))
+                    if model_files:
+                        model_path = candidate_path
+                        model_name = candidate_name
+                        break
+            
+            # Final fallback - use relative path and hope for the best
+            if model_path is None:
+                model_path = Path("models-cunet")
+                model_name = 'fallback_cunet'
+            
             cmd = [
                 self.waifu2x_path,
                 '-i', input_path,
                 '-o', output_path,
                 '-s', str(scale_int),
-                '-n', '3',  # Strong noise reduction (xyle-official recommended)
+                '-n', '1',  # Denoising level from article recommendation
                 '-g', '0',  # Force GPU 0 (Radeon RX Vega) explicitly
-                '-m', str(Path(self.waifu2x_path).parent / 'models-cunet'),  # Full model path
+                '-m', str(model_path),
                 '-f', 'png',  # Output format
-                '-t', str(tile_size),  # Optimized tile size (400 recommended)
-                '-j', '1:8:4',  # Increased processing threads for better GPU utilization
+                '-t', '400',  # Default tile size from article (optimal performance)
+                '-j', f'2:{min(4, max(2, self.gpu_info.get("amd", {}).get("gpus", [{}])[0].get("memory_mb", 4000) // 1000))}:2',  # Optimized for GPU memory
                 '-v'  # Verbose output for debugging
             ]
             
             # Debug waifu2x command for first few frames
             if progress_dialog:
+                progress_dialog.window.after(0, lambda: progress_dialog.add_log_message(f"DEBUG: Using {model_name} model at: {model_path}"))
                 progress_dialog.window.after(0, lambda: progress_dialog.add_log_message(f"DEBUG: Waifu2x command: {' '.join(cmd)}"))
-                progress_dialog.window.after(0, lambda: progress_dialog.add_log_message(f"DEBUG: GPU ID: {self.gpu_id}, Tile size: {tile_size}"))
+                progress_dialog.window.after(0, lambda: progress_dialog.add_log_message(f"DEBUG: GPU ID: {self.gpu_id}, Tile size: 400"))
+                progress_dialog.window.after(0, lambda: progress_dialog.add_log_message(f"DEBUG: Waifu2x executable exists: {Path(self.waifu2x_path).exists()}"))
+                progress_dialog.window.after(0, lambda: progress_dialog.add_log_message(f"DEBUG: Model directory exists: {model_path.exists()}"))
+                if model_path.exists():
+                    model_files = list(model_path.glob("*.param"))[:3]
+                    all_files = list(model_path.glob("*"))[:10]
+                    progress_dialog.window.after(0, lambda: progress_dialog.add_log_message(f"DEBUG: Model files found: {[f.name for f in model_files]}"))
+                    progress_dialog.window.after(0, lambda: progress_dialog.add_log_message(f"DEBUG: All files in model dir: {[f.name for f in all_files]}"))
+                    progress_dialog.window.after(0, lambda: progress_dialog.add_log_message(f"DEBUG: Model directory path: {model_path}"))
+                progress_dialog.window.after(0, lambda: progress_dialog.add_log_message(f"DEBUG: Input file exists: {Path(input_path).exists()}"))
+                progress_dialog.window.after(0, lambda: progress_dialog.add_log_message(f"DEBUG: Output directory exists: {Path(output_path).parent.exists()}"))
             
             # Hide console window on Windows
             startupinfo = None
@@ -326,14 +419,70 @@ class Waifu2xExecutableBackend:
             # Debug waifu2x output for first few frames
             if progress_dialog:
                 progress_dialog.window.after(0, lambda: progress_dialog.add_log_message(f"DEBUG: Waifu2x return code: {result.returncode}"))
+                
+                # Decode specific error codes
+                if result.returncode == 3221226505:  # 0xC0000409
+                    progress_dialog.window.after(0, lambda: progress_dialog.add_log_message(f"DEBUG: Error: Stack overflow/Memory access violation"))
+                elif result.returncode == -1073741819:  # 0xC0000005
+                    progress_dialog.window.after(0, lambda: progress_dialog.add_log_message(f"DEBUG: Error: Access violation"))
+                elif result.returncode != 0:
+                    progress_dialog.window.after(0, lambda: progress_dialog.add_log_message(f"DEBUG: Error: Unknown error code {result.returncode} (0x{result.returncode:08X})"))
+                
                 if result.stderr:
-                    progress_dialog.window.after(0, lambda: progress_dialog.add_log_message(f"DEBUG: Waifu2x stderr: {result.stderr[:200]}"))
+                    progress_dialog.window.after(0, lambda: progress_dialog.add_log_message(f"DEBUG: Waifu2x stderr: {result.stderr[:300]}"))
                 if result.stdout:
                     progress_dialog.window.after(0, lambda: progress_dialog.add_log_message(f"DEBUG: Waifu2x stdout: {result.stdout[:200]}"))
+                
+                # Check if output file was created despite error
+                output_exists = Path(output_path).exists()
+                progress_dialog.window.after(0, lambda: progress_dialog.add_log_message(f"DEBUG: Output file created: {output_exists}"))
             
             if result.returncode != 0:
-                logger.debug(f"Waifu2x failed: {result.stderr}")
-                return False
+                logger.error(f"Waifu2x GPU failed with return code {result.returncode}")
+                logger.error(f"Waifu2x stderr: {result.stderr}")
+                logger.error(f"Waifu2x stdout: {result.stdout}")
+                logger.error(f"Waifu2x command: {' '.join(cmd)}")
+                
+                # Try CPU fallback if GPU failed
+                if progress_dialog:
+                    progress_dialog.window.after(0, lambda: progress_dialog.add_log_message(f"ERROR: Waifu2x GPU failed with code {result.returncode}"))
+                    progress_dialog.window.after(0, lambda: progress_dialog.add_log_message(f"ERROR: {result.stderr}"))
+                    progress_dialog.window.after(0, lambda: progress_dialog.add_log_message(f"DEBUG: Trying CPU fallback..."))
+                
+                # Modify command for CPU processing
+                cpu_cmd = cmd.copy()
+                for i, arg in enumerate(cpu_cmd):
+                    if arg == '-g':
+                        cpu_cmd[i+1] = '-1'  # Use CPU
+                        break
+                
+                try:
+                    cpu_result = subprocess.run(
+                        cpu_cmd, 
+                        capture_output=True, 
+                        text=True, 
+                        timeout=240,  # Longer timeout for CPU
+                        startupinfo=startupinfo
+                    )
+                    
+                    if progress_dialog:
+                        progress_dialog.window.after(0, lambda: progress_dialog.add_log_message(f"DEBUG: CPU fallback return code: {cpu_result.returncode}"))
+                    
+                    if cpu_result.returncode == 0 and Path(output_path).exists():
+                        if progress_dialog:
+                            progress_dialog.window.after(0, lambda: progress_dialog.add_log_message(f"DEBUG: CPU fallback successful"))
+                        return True
+                        
+                except subprocess.TimeoutExpired:
+                    logger.warning(f"CPU fallback timed out for: {input_path}")
+                except Exception as e:
+                    logger.debug(f"CPU fallback error: {e}")
+                
+                # Final fallback: OpenCV upscaling
+                if progress_dialog:
+                    progress_dialog.window.after(0, lambda: progress_dialog.add_log_message(f"DEBUG: Trying OpenCV fallback..."))
+                
+                return self._opencv_upscale_fallback(input_path, output_path, scale_factor, progress_dialog)
             
             # Verify output file exists
             return Path(output_path).exists()
@@ -355,6 +504,40 @@ class Waifu2xExecutableBackend:
             "gpu_mode": self.gpu_id >= 0
         }
     
+    def _opencv_upscale_fallback(self, input_path: str, output_path: str, scale_factor: float = 2.0, progress_dialog=None) -> bool:
+        """OpenCV-based upscaling fallback when Waifu2x fails"""
+        try:
+            if progress_dialog:
+                progress_dialog.window.after(0, lambda: progress_dialog.add_log_message(f"INFO: Using OpenCV INTER_CUBIC upscaling"))
+            
+            # Read image
+            img = cv2.imread(input_path, cv2.IMREAD_COLOR)
+            if img is None:
+                logger.error(f"Failed to read image: {input_path}")
+                return False
+            
+            # Calculate new dimensions
+            height, width = img.shape[:2]
+            new_width = int(width * scale_factor)
+            new_height = int(height * scale_factor)
+            
+            # Upscale using INTER_CUBIC (better quality than LANCZOS for some cases)
+            upscaled = cv2.resize(img, (new_width, new_height), interpolation=cv2.INTER_CUBIC)
+            
+            # Save result
+            success = cv2.imwrite(output_path, upscaled)
+            
+            if success and progress_dialog:
+                progress_dialog.window.after(0, lambda: progress_dialog.add_log_message(f"INFO: OpenCV fallback successful"))
+            
+            return success
+            
+        except Exception as e:
+            logger.error(f"OpenCV fallback failed: {e}")
+            if progress_dialog:
+                progress_dialog.window.after(0, lambda: progress_dialog.add_log_message(f"ERROR: OpenCV fallback failed: {e}"))
+            return False
+
     def cleanup(self):
         """Cleanup backend resources"""
         pass  # Nothing to cleanup for executable backend

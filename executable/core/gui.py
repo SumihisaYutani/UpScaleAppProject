@@ -10,7 +10,7 @@ from tkinter import filedialog
 import threading
 import logging
 from pathlib import Path
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List, Callable
 
 try:
     import customtkinter as ctk
@@ -30,8 +30,11 @@ logger = logging.getLogger(__name__)
 
 # Configure CustomTkinter
 if GUI_AVAILABLE and ctk:
+    logger.info("CustomTkinter loaded successfully - Modern GUI enabled")
     ctk.set_appearance_mode("dark")  # Modes: "System" (standard), "Dark", "Light"
     ctk.set_default_color_theme("blue")  # Themes: "blue" (standard), "green", "dark-blue"
+else:
+    logger.warning("CustomTkinter not available - Falling back to standard Tkinter")
 
 class ProcessingStepTracker:
     """実行ステップごとのステータス追跡クラス"""
@@ -123,7 +126,7 @@ class ProgressDialog:
             # Use CustomTkinter
             self.window = ctk.CTkToplevel(parent)
             self.window.title("Processing Video")
-            self.window.geometry("875x650")
+            self.window.geometry("875x750")
             self.window.resizable(False, False)
             
             # Make modal
@@ -133,13 +136,13 @@ class ProgressDialog:
             # Center on parent
             parent.update_idletasks()
             x = (parent.winfo_x() + parent.winfo_width() // 2) - 300
-            y = (parent.winfo_y() + parent.winfo_height() // 2) - 200
+            y = (parent.winfo_y() + parent.winfo_height() // 2) - 250
             self.window.geometry(f"+{x}+{y}")
         else:
             # Fallback to standard tkinter
             self.window = tk.Toplevel(parent)
             self.window.title("Processing Video")
-            self.window.geometry("625x572")
+            self.window.geometry("675x672")
             self.window.resizable(False, False)
             
             # Make modal
@@ -148,8 +151,8 @@ class ProgressDialog:
             
             # Center on parent
             parent.update_idletasks()
-            x = parent.winfo_x() + (parent.winfo_width() // 2) - 250
-            y = parent.winfo_y() + (parent.winfo_height() // 2) - 175
+            x = parent.winfo_x() + (parent.winfo_width() // 2) - 275
+            y = parent.winfo_y() + (parent.winfo_height() // 2) - 225
             self.window.geometry(f"+{x}+{y}")
         
         self.cancelled = False
@@ -196,6 +199,45 @@ class ProgressDialog:
                 font=ctk.CTkFont(size=12)
             )
             self.progress_label.pack(pady=(0, 10))
+            
+            # GPU Status section
+            self.gpu_frame = ctk.CTkFrame(self.main_frame)
+            self.gpu_frame.pack(fill="x", padx=10, pady=(0, 10))
+            
+            # GPU Status title
+            gpu_title = ctk.CTkLabel(
+                self.gpu_frame,
+                text="🔥 GPU Processing Status",
+                font=ctk.CTkFont(size=14, weight="bold")
+            )
+            gpu_title.pack(pady=(10, 5))
+            
+            # GPU indicator container
+            gpu_indicator_frame = ctk.CTkFrame(self.gpu_frame)
+            gpu_indicator_frame.pack(fill="x", padx=10, pady=5)
+            
+            # GPU Status indicator (red lamp when active)
+            self.gpu_status_label = ctk.CTkLabel(
+                gpu_indicator_frame,
+                text="⚫ GPU: Idle",
+                font=ctk.CTkFont(size=12, weight="bold"),
+                text_color="gray"
+            )
+            self.gpu_status_label.pack(side="left", padx=10, pady=5)
+            
+            # GPU utilization bar
+            self.gpu_utilization_bar = ctk.CTkProgressBar(gpu_indicator_frame)
+            self.gpu_utilization_bar.pack(side="right", fill="x", expand=True, padx=10, pady=5)
+            self.gpu_utilization_bar.set(0)
+            
+            # GPU details label
+            self.gpu_details_label = ctk.CTkLabel(
+                self.gpu_frame,
+                text="Ready for AI processing...",
+                font=ctk.CTkFont(size=10),
+                text_color="gray"
+            )
+            self.gpu_details_label.pack(pady=(0, 10))
             
             # Step progress section
             steps_frame = ctk.CTkFrame(self.main_frame)
@@ -318,6 +360,39 @@ class ProgressDialog:
             progress_text_label = ttk.Label(main_frame, textvariable=self.progress_text_var)
             progress_text_label.pack(pady=5)
             
+            # GPU Status section (Standard Tkinter)
+            gpu_frame = ttk.LabelFrame(main_frame, text="GPU Processing Status", padding=10)
+            gpu_frame.pack(fill="x", pady=(10, 0))
+            
+            # GPU Status indicator
+            self.gpu_status_var = tk.StringVar(value="GPU: Idle")
+            self.gpu_status_label = ttk.Label(
+                gpu_frame, 
+                textvariable=self.gpu_status_var,
+                font=("Arial", 10, "bold"),
+                foreground="gray"
+            )
+            self.gpu_status_label.pack(pady=2)
+            
+            # GPU utilization bar (standard)
+            self.gpu_utilization_var = tk.DoubleVar()
+            self.gpu_utilization_bar = ttk.Progressbar(
+                gpu_frame,
+                variable=self.gpu_utilization_var,
+                maximum=100
+            )
+            self.gpu_utilization_bar.pack(fill="x", pady=2)
+            
+            # GPU details
+            self.gpu_details_var = tk.StringVar(value="Ready for AI processing...")
+            self.gpu_details_label = ttk.Label(
+                gpu_frame,
+                textvariable=self.gpu_details_var,
+                font=("Arial", 9),
+                foreground="gray"
+            )
+            self.gpu_details_label.pack(pady=2)
+            
             # Log button
             log_button_frame = ttk.Frame(main_frame)
             log_button_frame.pack(fill="x", pady=(10, 0))
@@ -355,6 +430,43 @@ class ProgressDialog:
             self.progress_var.set(progress)
             self.progress_text_var.set(f"{progress:.1f}%")
             self.status_var.set(message)
+            self.window.update_idletasks()
+    
+    def update_gpu_status(self, is_active: bool, utilization: float = 0, details: str = None):
+        """Update GPU status indicator"""
+        if GUI_AVAILABLE and ctk:
+            # CustomTkinter implementation
+            if is_active:
+                self.gpu_status_label.configure(
+                    text="🔴 GPU: Processing",
+                    text_color="red"
+                )
+                self.gpu_utilization_bar.set(utilization / 100)
+            else:
+                self.gpu_status_label.configure(
+                    text="⚫ GPU: Idle",
+                    text_color="gray"
+                )
+                self.gpu_utilization_bar.set(0)
+            
+            if details:
+                self.gpu_details_label.configure(text=details)
+                
+            self.window.update_idletasks()
+        else:
+            # Standard tkinter fallback
+            if is_active:
+                self.gpu_status_var.set("🔴 GPU: Processing")
+                self.gpu_status_label.configure(foreground="red")
+                self.gpu_utilization_var.set(utilization)
+            else:
+                self.gpu_status_var.set("⚫ GPU: Idle")
+                self.gpu_status_label.configure(foreground="gray")
+                self.gpu_utilization_var.set(0)
+            
+            if details:
+                self.gpu_details_var.set(details)
+                
             self.window.update_idletasks()
     
     def update_step_progress(self, step_id: str, progress: float, status: str = None):
@@ -607,13 +719,13 @@ class ProgressDialog:
 class MainGUI:
     """Main GUI application window"""
     
-    def __init__(self, video_processor, ai_processor, gpu_info):
+    def __init__(self, video_processor, ai_processor, gpu_info, session_manager=None):
         self.video_processor = video_processor
         self.ai_processor = ai_processor  
         self.gpu_info = gpu_info
         
-        # Initialize session manager
-        self.session_manager = SessionManager()
+        # Use provided session manager or create new one
+        self.session_manager = session_manager or SessionManager()
         self.current_session_id = None
         
         self.root = None
@@ -1164,7 +1276,7 @@ Additional GPUs: +{additional_count} more"""
         """Add message to status display"""
         import time
         timestamp = time.strftime("%H:%M:%S")
-        formatted = f"[{timestamp}] {message}\\n"
+        formatted = f"[{timestamp}] {message}\n"
         
         if GUI_AVAILABLE and ctk:
             # CustomTkinter implementation
@@ -1617,7 +1729,7 @@ Additional GPUs: +{additional_count} more"""
             self.process_button.config(text="Start Processing", state="normal")
             messagebox.showinfo(
                 "Success!",
-                f"Video processing completed successfully!\\n\\nOutput saved to:\\n{output_path}"
+                f"Video processing completed successfully!\n\nOutput saved to:\n{output_path}"
             )
         
         self._add_status_message(f"Processing completed: {Path(output_path).name}")
@@ -1648,7 +1760,7 @@ Additional GPUs: +{additional_count} more"""
             )
         else:
             self.process_button.config(text="Start Processing", state="normal")
-            messagebox.showerror("Processing Error", f"Processing failed:\\n\\n{error_msg}")
+            messagebox.showerror("Processing Error", f"Processing failed:\n\n{error_msg}")
         
         self._add_status_message(f"Processing failed: {error_msg}")
         
@@ -1791,11 +1903,15 @@ Additional GPUs: +{additional_count} more"""
     def _check_resumable_sessions(self, file_path: str):
         """Check for resumable sessions when video file is selected"""
         try:
+            logger.info(f"DEBUG: Checking for resumable sessions for {file_path}")
+            
             # Get current settings
             settings = self._get_current_settings()
+            logger.info(f"DEBUG: Current settings: {settings}")
             
             # Check for resumable session
             resumable_session = self.session_manager.find_resumable_session(file_path, settings)
+            logger.info(f"DEBUG: Resumable session found: {resumable_session is not None}")
             
             if resumable_session:
                 logger.info(f"Found resumable session for {Path(file_path).name}")
@@ -1820,10 +1936,13 @@ Additional GPUs: +{additional_count} more"""
                     logger.info("User cancelled resume dialog")
             else:
                 # No resumable session found
+                logger.info(f"DEBUG: No resumable session found for {file_path}")
                 self.current_session_id = None
                 
         except Exception as e:
-            logger.warning(f"Error checking resumable sessions: {e}")
+            logger.error(f"DEBUG: Error checking resumable sessions: {e}")
+            import traceback
+            logger.error(f"DEBUG: Traceback: {traceback.format_exc()}")
             self.current_session_id = None
     
     def _get_current_settings(self) -> Dict[str, Any]:

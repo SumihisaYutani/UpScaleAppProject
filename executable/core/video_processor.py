@@ -14,19 +14,35 @@ from typing import Dict, List, Optional, Any, Callable
 from PIL import Image
 
 from .utils import ProgressCallback, SimpleTimer, format_duration
+from .fast_frame_extractor import FastFrameExtractor
 
 logger = logging.getLogger(__name__)
 
 class VideoProcessor:
     """Handles all video processing operations using external binaries"""
     
-    def __init__(self, resource_manager, temp_dir: Path):
+    def __init__(self, resource_manager, temp_dir: Path, gpu_info: Dict = None):
         self.resource_manager = resource_manager
         self.temp_dir = Path(temp_dir)
         self.frame_dir = self.temp_dir / "frames"
-        self.frame_dir.mkdir(exist_ok=True)
+        self.gpu_info = gpu_info or {}
+        
+        # Create frame directory with error handling
+        try:
+            self.frame_dir.mkdir(parents=True, exist_ok=True)
+        except OSError as e:
+            if e.winerror == 183:  # File already exists
+                logger.warning(f"Frame directory creation race condition, continuing: {self.frame_dir}")
+                if not (self.frame_dir.exists() and self.frame_dir.is_dir()):
+                    raise RuntimeError(f"Frame directory is not usable: {self.frame_dir}")
+            else:
+                raise
+        
+        # Initialize FastFrameExtractor with GPU support for optimized processing
+        self.fast_extractor = FastFrameExtractor(resource_manager, str(self.temp_dir), self.gpu_info)
         
         logger.info(f"VideoProcessor initialized - Temp dir: {self.temp_dir}")
+        logger.info(f"FastFrameExtractor initialized with GPU support for high-performance frame extraction")
     
     def validate_video(self, video_path: str) -> Dict[str, Any]:
         """Validate video file and get information"""
@@ -40,14 +56,11 @@ class VideoProcessor:
             }
         
         try:
-            # Use ffprobe to get video information
+            # Try ffprobe first, fallback to OpenCV if not available
             ffprobe_path = self.resource_manager.get_binary_path('ffprobe')
             if not ffprobe_path:
-                return {
-                    'valid': False,
-                    'error': 'FFprobe not available',
-                    'info': None
-                }
+                logger.warning("FFprobe not available, using OpenCV fallback")
+                return self._validate_video_with_opencv(video_path)
             
             cmd = [
                 ffprobe_path,
@@ -75,7 +88,68 @@ class VideoProcessor:
                 }
             
             # Parse JSON output
-            probe_data = json.loads(result.stdout)
+            try:
+                if not result.stdout.strip():
+                    return {
+                        'valid': False,
+                        'error': 'FFprobe returned empty output',
+                        'info': None
+                    }
+                
+                # Handle JSON parsing with multiple fallback methods
+                json_output = result.stdout
+                probe_data = None
+                
+                # Method 1: Direct parsing
+                try:
+                    probe_data = json.loads(json_output)
+                except json.JSONDecodeError:
+                    pass
+                
+                # Method 2: Fix common Windows path escaping issues
+                if probe_data is None:
+                    try:
+                        # Replace backslashes that cause JSON parsing issues
+                        fixed_output = json_output.replace('\\', '/')
+                        # Also handle other problematic escape sequences
+                        fixed_output = fixed_output.replace('\\"', '"')
+                        probe_data = json.loads(fixed_output)
+                        logger.info("JSON parsing successful after path fixing")
+                    except json.JSONDecodeError:
+                        pass
+                
+                # Method 3: Remove problematic characters
+                if probe_data is None:
+                    try:
+                        # Remove non-printable characters except standard whitespace
+                        clean_output = ''.join(char for char in json_output if char.isprintable() or char in '\n\r\t ')
+                        probe_data = json.loads(clean_output)
+                        logger.info("JSON parsing successful after character cleaning")
+                    except json.JSONDecodeError:
+                        pass
+                
+                # Method 4: Use regex to fix paths in JSON
+                if probe_data is None:
+                    try:
+                        import re
+                        # Replace Windows paths in JSON with forward slashes
+                        regex_fixed = re.sub(r'"([A-Za-z]:[^"]*)"', lambda m: '"' + m.group(1).replace('\\', '/') + '"', json_output)
+                        probe_data = json.loads(regex_fixed)
+                        logger.info("JSON parsing successful after regex fixing")
+                    except (json.JSONDecodeError, re.error):
+                        pass
+                
+                if probe_data is None:
+                    raise json.JSONDecodeError("All JSON parsing methods failed", json_output, 0)
+                    
+            except json.JSONDecodeError as e:
+                logger.error(f"JSON parsing failed for video {video_path.name}: {e}")
+                logger.error(f"FFprobe stdout: {result.stdout[:1000]}")  # Log first 1000 chars
+                logger.error(f"Error details: {str(e)}")
+                
+                # Fallback to OpenCV if JSON parsing completely fails
+                logger.warning("Falling back to OpenCV for video validation")
+                return self._validate_video_with_opencv(video_path)
             
             # Find video stream
             video_stream = None
@@ -203,54 +277,37 @@ class VideoProcessor:
             return 0
     
     def extract_frames(self, video_path: str, progress_callback: Optional[Callable] = None, progress_dialog=None) -> List[str]:
-        """Extract frames from video using FFmpeg with batch processing"""
+        """Extract frames from video using optimized FastFrameExtractor"""
         video_path = Path(video_path)
         
         # Add debug messages to GUI log
         if progress_dialog:
             try:
-                progress_dialog.window.after(0, lambda: progress_dialog.add_log_message(f"DEBUG: Starting frame extraction from: {video_path.name}"))
-                progress_dialog.window.after(0, lambda: progress_dialog.add_log_message(f"DEBUG: Frame directory: {self.frame_dir}"))
-                progress_dialog.window.after(0, lambda: progress_dialog.add_log_message(f"DEBUG: Frame directory exists: {self.frame_dir.exists()}"))
+                progress_dialog.window.after(0, lambda: progress_dialog.add_log_message(f"INFO: Starting optimized frame extraction from: {video_path.name}"))
+                progress_dialog.window.after(0, lambda: progress_dialog.add_log_message(f"INFO: Using FastFrameExtractor for improved performance"))
             except:
                 pass
         
-        logger.info(f"DEBUG: Starting frame extraction from: {video_path}")
-        logger.info(f"DEBUG: Frame directory: {self.frame_dir}")
-        logger.info(f"DEBUG: Frame directory exists: {self.frame_dir.exists()}")
+        logger.info(f"Starting optimized frame extraction from: {video_path}")
         
         # Clear previous frames
-        logger.info("DEBUG: Clearing previous frames...")
+        logger.info("Clearing previous frames...")
         png_count = len(list(self.frame_dir.glob("*.png")))
         jpg_count = len(list(self.frame_dir.glob("*.jpg")))
-        logger.info(f"DEBUG: Found {png_count} PNG files, {jpg_count} JPG files to clean")
+        logger.info(f"Found {png_count} PNG files, {jpg_count} JPG files to clean")
         
         for frame_file in self.frame_dir.glob("*.png"):
             frame_file.unlink()
-        for frame_file in self.frame_dir.glob("*.jpg"):  # Also clear JPEG from test runs
+        for frame_file in self.frame_dir.glob("*.jpg"):
             frame_file.unlink()
         
-        logger.info(f"DEBUG: Cleanup complete. Starting frame extraction from: {video_path}")
-        
         try:
-            ffmpeg_path = self.resource_manager.get_binary_path('ffmpeg')
-            logger.info(f"DEBUG: FFmpeg path: {ffmpeg_path}")
-            if not ffmpeg_path:
-                raise RuntimeError("FFmpeg not available")
-            
-            # Get video info for batch processing
-            if progress_dialog:
-                progress_dialog.window.after(0, lambda: progress_dialog.add_log_message("DEBUG: Getting video information..."))
-            logger.info("DEBUG: Getting video information...")
+            # Get video info for processing decision
             video_info = self.validate_video(str(video_path))
-            
-            if progress_dialog:
-                progress_dialog.window.after(0, lambda: progress_dialog.add_log_message(f"DEBUG: Video validation result: {'Valid' if video_info['valid'] else 'Invalid'}"))
-            logger.info(f"DEBUG: Video validation result: {video_info}")
             
             if not video_info['valid']:
                 if progress_dialog:
-                    progress_dialog.window.after(0, lambda: progress_dialog.add_log_message(f"DEBUG: Video validation failed: {video_info['error']}"))
+                    progress_dialog.window.after(0, lambda: progress_dialog.add_log_message(f"ERROR: Video validation failed: {video_info['error']}"))
                 raise RuntimeError(f"Invalid video: {video_info['error']}")
             
             total_frames = video_info['info']['frame_count']
@@ -258,32 +315,38 @@ class VideoProcessor:
             frame_rate = video_info['info']['frame_rate']
             
             if progress_dialog:
-                progress_dialog.window.after(0, lambda: progress_dialog.add_log_message(f"DEBUG: Video details - Total frames: {total_frames}, Duration: {duration:.1f}s, Frame rate: {frame_rate:.2f}"))
-            logger.info(f"DEBUG: Video details - Total frames: {total_frames}, Duration: {duration}s, Frame rate: {frame_rate}")
+                progress_dialog.window.after(0, lambda: progress_dialog.add_log_message(f"INFO: Video: {total_frames} frames, {duration:.1f}s, {frame_rate:.2f} fps"))
+                
+                # Show estimated time
+                estimated_time = self.fast_extractor.estimate_extraction_time(total_frames)
+                progress_dialog.window.after(0, lambda: progress_dialog.add_log_message(f"INFO: Estimated extraction time: {estimated_time/60:.1f} minutes"))
             
-            # Calculate batch settings based on video size
-            # Process in smaller chunks to prevent memory exhaustion
-            max_frames_per_batch = 1000  # Reduced from unlimited to 1000 frames per batch
-            if progress_dialog:
-                progress_dialog.window.after(0, lambda: progress_dialog.add_log_message(f"DEBUG: Max frames per batch: {max_frames_per_batch}"))
-            logger.info(f"DEBUG: Max frames per batch: {max_frames_per_batch}")
+            logger.info(f"Video details - Total frames: {total_frames}, Duration: {duration}s, Frame rate: {frame_rate}")
             
-            if total_frames > max_frames_per_batch:
-                if progress_dialog:
-                    progress_dialog.window.after(0, lambda: progress_dialog.add_log_message(f"DEBUG: Large video detected ({total_frames} frames > {max_frames_per_batch}). Using batch processing."))
-                logger.info(f"DEBUG: Large video detected ({total_frames} frames > {max_frames_per_batch}). Using batch processing.")
-                return self._extract_frames_in_batches(video_path, total_frames, duration, max_frames_per_batch, progress_callback, progress_dialog)
-            else:
-                if progress_dialog:
-                    progress_dialog.window.after(0, lambda: progress_dialog.add_log_message(f"DEBUG: Small video detected ({total_frames} frames <= {max_frames_per_batch}). Using single-pass processing."))
-                logger.info(f"DEBUG: Small video detected ({total_frames} frames <= {max_frames_per_batch}). Using single-pass processing.")
-                return self._extract_frames_single_pass(video_path, progress_callback, progress_dialog)
+            # Use FastFrameExtractor for all videos
+            logger.info("Using FastFrameExtractor for optimized parallel processing")
+            frame_paths = self.fast_extractor.extract_frames_parallel(
+                video_path, total_frames, duration, progress_callback, progress_dialog
+            )
+            
+            logger.info(f"FastFrameExtractor completed: {len(frame_paths)} frames extracted")
+            return frame_paths
             
         except Exception as e:
-            logger.error(f"DEBUG: Frame extraction failed with exception: {e}")
-            import traceback
-            logger.error(f"DEBUG: Full traceback: {traceback.format_exc()}")
-            raise
+            logger.error(f"Optimized frame extraction failed: {e}")
+            if progress_dialog:
+                progress_dialog.window.after(0, lambda: progress_dialog.add_log_message(f"ERROR: Frame extraction failed: {str(e)}"))
+            
+            # Fallback to original method if FastFrameExtractor fails
+            logger.info("Falling back to original frame extraction method...")
+            if progress_dialog:
+                progress_dialog.window.after(0, lambda: progress_dialog.add_log_message("INFO: Falling back to original extraction method"))
+            
+            return self._extract_frames_fallback(video_path, progress_callback, progress_dialog)
+    
+    def _extract_frames_fallback(self, video_path: Path, progress_callback: Optional[Callable] = None, progress_dialog=None) -> List[str]:
+        """Fallback frame extraction using original single-pass method"""
+        return self._extract_frames_single_pass(video_path, progress_callback, progress_dialog)
     
     def _extract_frames_single_pass(self, video_path: Path, progress_callback: Optional[Callable] = None, progress_dialog=None) -> List[str]:
         """Extract frames in a single pass for smaller videos"""
@@ -483,10 +546,34 @@ class VideoProcessor:
             logger.info(f"DEBUG: Creating batch directory: {batch_dir}")
             
             try:
-                batch_dir.mkdir(exist_ok=True)
-                logger.info(f"DEBUG: Batch directory created successfully: {batch_dir.exists()}")
+                # Handle directory creation with retries for Windows
+                if not batch_dir.exists():
+                    batch_dir.mkdir(parents=True, exist_ok=True)
+                    logger.info(f"DEBUG: Batch directory created: {batch_dir}")
+                elif batch_dir.is_dir():
+                    logger.info(f"DEBUG: Batch directory already exists: {batch_dir}")
+                else:
+                    # If path exists but is not a directory, remove and recreate
+                    logger.warning(f"DEBUG: Path exists but is not directory, removing: {batch_dir}")
+                    if batch_dir.exists():
+                        batch_dir.unlink()
+                    batch_dir.mkdir(parents=True, exist_ok=True)
+                    
+                logger.info(f"DEBUG: Batch directory ready: {batch_dir.exists()}")
+            except OSError as e:
+                if e.winerror == 183:  # File already exists
+                    logger.warning(f"DEBUG: Directory creation race condition detected, continuing: {batch_dir}")
+                    # Check if directory actually exists and is usable
+                    if batch_dir.exists() and batch_dir.is_dir():
+                        logger.info(f"DEBUG: Directory is usable despite error: {batch_dir}")
+                    else:
+                        logger.error(f"DEBUG: Directory creation failed and path is not usable: {batch_dir}")
+                        raise
+                else:
+                    logger.error(f"DEBUG: Failed to create batch directory: {e}")
+                    raise
             except Exception as e:
-                logger.error(f"DEBUG: Failed to create batch directory: {e}")
+                logger.error(f"DEBUG: Unexpected error creating batch directory: {e}")
                 raise
             
             output_pattern = str(batch_dir / "frame_%06d.png")
@@ -519,12 +606,30 @@ class VideoProcessor:
             # Execute batch with timeout
             try:
                 logger.info(f"DEBUG: Starting FFmpeg subprocess for batch {batch_num + 1}")
+                logger.info(f"DEBUG: Command: {' '.join(cmd[:5])} ... {' '.join(cmd[-3:])}")
+                logger.info(f"DEBUG: Working directory: {self.frame_dir}")
+                logger.info(f"DEBUG: Batch output directory: {batch_dir}")
+                logger.info(f"DEBUG: Expected output pattern: {output_pattern}")
+                
                 result = subprocess.run(cmd, capture_output=True, text=True, 
                                       timeout=900, startupinfo=startupinfo)  # 15 minutes per batch
                 
                 logger.info(f"DEBUG: FFmpeg batch {batch_num + 1} completed with return code: {result.returncode}")
                 logger.info(f"DEBUG: FFmpeg stdout length: {len(result.stdout)} chars")
                 logger.info(f"DEBUG: FFmpeg stderr length: {len(result.stderr)} chars")
+                
+                if result.returncode != 0:
+                    logger.error(f"DEBUG: FFmpeg batch {batch_num + 1} failed!")
+                    logger.error(f"DEBUG: FFmpeg stderr: {result.stderr[:500]}")
+                else:
+                    logger.info(f"DEBUG: FFmpeg batch {batch_num + 1} succeeded")
+                    
+                # Check if output files were created
+                created_files = list(batch_dir.glob("frame_*.png")) if batch_dir.exists() else []
+                logger.info(f"DEBUG: Files created in batch {batch_num + 1}: {len(created_files)}")
+                if created_files:
+                    logger.info(f"DEBUG: First few files: {[f.name for f in created_files[:3]]}")
+                    logger.info(f"DEBUG: Last few files: {[f.name for f in created_files[-3:]]}")
                 
                 if result.returncode != 0:
                     logger.error(f"DEBUG: Batch {batch_num + 1} failed with return code {result.returncode}")
@@ -538,15 +643,49 @@ class VideoProcessor:
                 logger.info(f"DEBUG: Found {len(batch_frames)} frames in batch {batch_num + 1}")
                 
                 # Rename frames to maintain sequential numbering based on actual frame positions
-                logger.info(f"DEBUG: Renaming frames for sequential numbering")
+                logger.info(f"DEBUG: Starting frame renaming for batch {batch_num + 1}")
+                logger.info(f"DEBUG: Batch directory contents before renaming: {[f.name for f in batch_frames[:5]]}")
+                logger.info(f"DEBUG: Total frames found in batch: {len(batch_frames)}")
                 expected_frames_in_batch = min(batch_size, total_frames - batch_num * batch_size)
+                logger.info(f"DEBUG: Expected frames in this batch: {expected_frames_in_batch}")
                 
                 for i, frame_file in enumerate(batch_frames):
                     frame_number = batch_num * batch_size + i + 1
                     new_name = self.frame_dir / f"frame_{frame_number:06d}.png"
-                    logger.debug(f"DEBUG: Renaming {frame_file} to {new_name}")
-                    frame_file.rename(new_name)
-                    all_frame_paths.append(str(new_name))
+                    logger.debug(f"DEBUG: Moving {frame_file} to {new_name}")
+                    
+                    # Safe file move with error handling
+                    try:
+                        # Check if destination already exists
+                        if new_name.exists():
+                            logger.warning(f"DEBUG: Destination file already exists, removing: {new_name}")
+                            new_name.unlink()
+                        
+                        # Move file with retry mechanism
+                        frame_file.rename(new_name)
+                        all_frame_paths.append(str(new_name))
+                        
+                    except OSError as e:
+                        if e.winerror == 183:  # File already exists
+                            logger.warning(f"DEBUG: File move race condition detected for {frame_file}")
+                            # Try alternative approach: copy then delete
+                            try:
+                                import shutil
+                                if new_name.exists():
+                                    new_name.unlink()
+                                shutil.copy2(frame_file, new_name)
+                                frame_file.unlink()
+                                all_frame_paths.append(str(new_name))
+                                logger.info(f"DEBUG: Successfully moved file using copy method: {new_name}")
+                            except Exception as e2:
+                                logger.error(f"DEBUG: Failed to move file {frame_file}: {e2}")
+                                raise
+                        else:
+                            logger.error(f"DEBUG: File move failed: {e}")
+                            raise
+                    except Exception as e:
+                        logger.error(f"DEBUG: Unexpected error moving file {frame_file}: {e}")
+                        raise
                 
                 # Verify frame count matches expectation
                 if len(batch_frames) != expected_frames_in_batch and batch_num == total_batches - 1:
@@ -557,11 +696,33 @@ class VideoProcessor:
                 
                 # Clean up batch directory
                 logger.info(f"DEBUG: Cleaning up batch directory {batch_dir}")
+                logger.info(f"DEBUG: Batch directory exists: {batch_dir.exists()}")
+                logger.info(f"DEBUG: Batch directory is empty: {len(list(batch_dir.iterdir())) == 0 if batch_dir.exists() else 'N/A'}")
+                
                 try:
-                    batch_dir.rmdir()
-                    logger.info(f"DEBUG: Batch directory removed successfully")
+                    if batch_dir.exists():
+                        # List remaining files before cleanup
+                        remaining_files = list(batch_dir.iterdir())
+                        if remaining_files:
+                            logger.warning(f"DEBUG: Batch directory still contains {len(remaining_files)} files: {[f.name for f in remaining_files[:5]]}")
+                            # Try to remove remaining files
+                            for file_path in remaining_files:
+                                try:
+                                    if file_path.is_file():
+                                        file_path.unlink()
+                                        logger.debug(f"DEBUG: Removed remaining file: {file_path.name}")
+                                except Exception as cleanup_e:
+                                    logger.warning(f"DEBUG: Failed to remove file {file_path.name}: {cleanup_e}")
+                        
+                        batch_dir.rmdir()
+                        logger.info(f"DEBUG: Batch directory removed successfully")
+                    else:
+                        logger.info(f"DEBUG: Batch directory already removed")
                 except Exception as e:
-                    logger.warning(f"DEBUG: Failed to remove batch directory: {e}")
+                    logger.error(f"DEBUG: Failed to remove batch directory {batch_dir}: {e}")
+                    logger.error(f"DEBUG: Error type: {type(e).__name__}")
+                    import traceback
+                    logger.error(f"DEBUG: Traceback: {traceback.format_exc()}")
                 
                 # Update progress
                 if progress_callback:
@@ -617,8 +778,8 @@ class VideoProcessor:
             # Create temporary frame list
             with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as f:
                 for frame_path in frame_paths:
-                    f.write(f"file '{frame_path}'\\n")
-                    f.write(f"duration {1/fps}\\n")
+                    f.write(f"file '{frame_path}'\n")
+                    f.write(f"duration {1/fps}\n")
                 frame_list_path = f.name
             
             try:
@@ -880,3 +1041,53 @@ class VideoProcessor:
                         pass
         except:
             pass
+    
+    def _validate_video_with_opencv(self, video_path: Path) -> Dict[str, Any]:
+        """Validate video using OpenCV as fallback when ffprobe is not available"""
+        try:
+            import cv2
+            
+            cap = cv2.VideoCapture(str(video_path))
+            if not cap.isOpened():
+                return {
+                    'valid': False,
+                    'error': 'Cannot open video file with OpenCV',
+                    'info': None
+                }
+            
+            # Get basic video info
+            fps = cap.get(cv2.CAP_PROP_FPS)
+            frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+            width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+            height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+            duration = frame_count / fps if fps > 0 else 0
+            
+            cap.release()
+            
+            # Create basic video info structure compatible with ffprobe format
+            video_info = {
+                'streams': [{
+                    'codec_type': 'video',
+                    'width': width,
+                    'height': height,
+                    'r_frame_rate': f"{fps}/1",
+                    'nb_frames': str(frame_count)
+                }],
+                'format': {
+                    'duration': str(duration),
+                    'size': str(video_path.stat().st_size)
+                }
+            }
+            
+            return {
+                'valid': True,
+                'error': None,
+                'info': video_info
+            }
+            
+        except Exception as e:
+            return {
+                'valid': False,
+                'error': f'OpenCV validation failed: {str(e)}',
+                'info': None
+            }

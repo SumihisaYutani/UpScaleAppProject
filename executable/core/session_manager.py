@@ -34,7 +34,7 @@ class SessionManager:
         video_stat = Path(video_path).stat()
         
         session_data = {
-            'video_path': str(Path(video_path).resolve()),
+            'video_path': str(Path(video_path).resolve()).replace('\\', '/'),
             'video_size': video_stat.st_size,
             'video_mtime': video_stat.st_mtime,
             'scale_factor': settings.get('scale_factor', 2.0),
@@ -66,7 +66,7 @@ class SessionManager:
         # Initialize progress data
         progress_data = {
             'session_id': session_id,
-            'video_file': str(Path(video_path).resolve()),
+            'video_file': str(Path(video_path).resolve()).replace('\\', '/'),
             'video_info': video_info,
             'settings': settings,
             'created_at': datetime.now().isoformat(),
@@ -246,8 +246,9 @@ class SessionManager:
         upscale_step = progress_data['steps']['upscale']
         completed_frames = upscale_step.get('completed_frames', [])
         
-        if frame_path not in completed_frames:
-            completed_frames.append(frame_path)
+        normalized_frame_path = frame_path.replace('\\', '/')
+        if normalized_frame_path not in completed_frames:
+            completed_frames.append(normalized_frame_path)
             upscale_step['completed_frames'] = completed_frames
             
             # Update progress percentage

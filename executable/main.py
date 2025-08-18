@@ -13,6 +13,14 @@ from pathlib import Path
 import tkinter as tk
 from tkinter import messagebox
 
+# Hide console window on Windows for executable
+if getattr(sys, 'frozen', False) and sys.platform == 'win32':
+    try:
+        import ctypes
+        ctypes.windll.user32.ShowWindow(ctypes.windll.kernel32.GetConsoleWindow(), 0)
+    except:
+        pass
+
 # Detect if running as executable or script
 if getattr(sys, 'frozen', False):
     # Running as PyInstaller executable
@@ -66,7 +74,6 @@ def cleanup_on_exit():
 def signal_handler(signum, frame):
     """Handle signals for clean shutdown"""
     global _app_instance
-    print(f"Received signal {signum}, shutting down...")
     if _app_instance:
         try:
             _app_instance.cleanup()

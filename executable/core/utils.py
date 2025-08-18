@@ -81,7 +81,26 @@ class ResourceManager:
                 logger.info(f"Found binary in subdirectory: {name} at {search_path}")
                 return str(search_path)
         
-        # Method 4: Fallback to system PATH
+        # Method 4: Check project tools directory (for development)
+        project_root = Path(__file__).parent.parent.parent  # Go up from executable/core/
+        if name == 'waifu2x':
+            tools_path = project_root / "tools" / "waifu2x-ncnn-vulkan" / "waifu2x-ncnn-vulkan-20220728-windows" / "waifu2x-ncnn-vulkan.exe"
+            if tools_path.exists():
+                logger.info(f"Found project tools binary: {name} at {tools_path}")
+                return str(tools_path)
+        elif name in ['ffmpeg', 'ffprobe']:
+            # Check common FFmpeg installation paths
+            ffmpeg_paths = [
+                Path("C:/ffmpeg/bin") / binary_filename,
+                Path("C:/Program Files/ffmpeg/bin") / binary_filename,
+                Path("C:/ffmpeg") / binary_filename,
+            ]
+            for ffmpeg_path in ffmpeg_paths:
+                if ffmpeg_path.exists():
+                    logger.info(f"Found system FFmpeg binary: {name} at {ffmpeg_path}")
+                    return str(ffmpeg_path)
+        
+        # Method 5: Fallback to system PATH
         system_path = shutil.which(binary_filename)
         if system_path:
             logger.info(f"Found system binary: {name} at {system_path}")

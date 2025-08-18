@@ -51,6 +51,7 @@ class UpScaleApp:
             from .video_processor import VideoProcessor  
             from .ai_processor import AIProcessor
             from .gpu_detector import GPUDetector
+            from .session_manager import SessionManager
             from .gui import MainGUI
             
             # Initialize resource manager
@@ -61,10 +62,11 @@ class UpScaleApp:
             gpu_info = self.gpu_detector.detect_gpus()
             logger.info(f"GPU Detection: {gpu_info}")
             
-            # Initialize processors
+            # Initialize processors with GPU support
             self.video_processor = VideoProcessor(
                 self.resource_manager, 
-                self.temp_dir
+                self.temp_dir,
+                gpu_info
             )
             
             self.ai_processor = AIProcessor(
@@ -72,11 +74,16 @@ class UpScaleApp:
                 gpu_info
             )
             
+            # Initialize session manager
+            self.session_manager = SessionManager()
+            logger.info("SessionManager initialized")
+            
             # Initialize GUI
             self.gui = MainGUI(
                 video_processor=self.video_processor,
                 ai_processor=self.ai_processor,
-                gpu_info=gpu_info
+                gpu_info=gpu_info,
+                session_manager=self.session_manager
             )
             
             logger.info("All components initialized successfully")
