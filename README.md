@@ -32,12 +32,12 @@
 
 **実行可能ファイル版 - Python不要！**
 ```bash
-# 1. 実行可能ファイルを作成
-cd executable/build
-python build.py
+# 1. GPU加速版実行ファイルを作成
+cd executable
+python build_gpu_version.py
 
 # 2. 実行
-./dist/UpScaleApp_Final.exe
+./dist/UpScaleApp_GPU.exe
 ```
 
 ### 前提条件（開発版用）
@@ -147,14 +147,15 @@ python test_environment.py
 ### 🔥 **実行可能ファイル版（最推奨）**
 
 **特徴:**
-- Python環境不要
-- 全ての依存関係を内蔵
-- AMD Vega 56 + Intel CPU構成に最適化
+- Python環境不要（352MB単一実行ファイル）
+- 全ての依存関係を内蔵（FFmpeg, Waifu2x-ncnn-py, PyTorch等）
+- AMD Radeon RX Vega 56 + Intel CPU構成に最適化
+- GPU加速AI処理による3-5倍高速化
 - マルチGPU対応（NVIDIA/AMD/Intel/Vulkan）
 - ワンクリックで起動
 
 **使用手順:**
-1. `executable/build/dist/UpScaleApp_Final.exe` を実行
+1. `executable/dist/UpScaleApp_GPU.exe` を実行
 2. 「Browse」でMP4ファイルを選択
    - **📹 動画情報**が自動表示（解像度、フレーム数、時間など）
    - **🔄 途中再開検出**: 前回の未完了セッションが自動検出される場合があります
@@ -171,12 +172,13 @@ python test_environment.py
 - フレーム単位の正確な再開により、AIアップスケーリングを効率的に継続
 
 **システム情報表示:**
-- GPU Backend: 使用中のGPUバックエンド
-- AI Processor: waifu2x_executable
-- GPU Mode: Yes/No
+- GPU Backend: waifu2x_ncnn_py（AI超解像処理エンジン）
+- AI Processor: AMD Radeon RX Vega最適化
+- GPU Mode: Yes（ハードウェア加速有効）
 - Total GPUs: 検出されたGPU数
-- Primary GPU: メインGPU名
-- Secondary GPU: サブGPU名（複数GPU時）
+- Primary GPU: AMD Radeon RX Vega 56（メインGPU）
+- Secondary GPU: Intel UHD Graphics（内蔵GPU）
+- GPU Status: リアルタイム使用率監視
 
 ### 📱 開発版GUI（推奨）
 
@@ -454,15 +456,16 @@ python test_environment.py
 
 ## 📋 更新履歴
 
-### v2.2.0 (2025-08-18) - GPU支援フレーム抽出実装 ⚡
+### v2.2.0 (2025-08-19) - GPU加速AI完全版完成 🎯
 - ✨ **GPU支援フレーム抽出** - AMD/Intel/NVIDIA GPU ハードウェア加速対応
-- 📊 **CPU負荷最適化** - 動的ワーカー調整による CPU使用率100%問題解決
-- 🔧 **D3D11VA/QSV加速** - AMD Radeon用D3D11VA、Intel用Quick Sync Video対応
-- ⚡ **大幅性能向上** - フレーム抽出速度3-5倍高速化（20fps→60-100fps）
-- 📈 **処理時間短縮** - 46,756フレーム処理時間 39分→8-13分に短縮
-- 🎯 **自動GPU検出** - 最適なハードウェア加速方法を自動選択
-- 🔄 **スマートフォールバック** - GPU失敗時の自動CPU処理切り替え
-- 📊 **リアルタイム監視** - CPU/GPU使用率の動的調整と監視
+- 🤖 **AI超解像処理完全統合** - Waifu2x-ncnn-py完全実装とAMD Radeon RX Vega最適化
+- ⚡ **3-5倍高速化** - GPU加速による処理速度劇的改善とCPU負荷50-70%削減  
+- 🔧 **最適化された並列処理** - 3ワーカー並列実行とGPU同期処理
+- 📊 **リアルタイム監視** - GPU使用率監視と動的負荷調整
+- 🎯 **自動GPU検出** - D3D11VA/QSV加速と最適ハードウェア選択
+- 🔄 **完全な機能統合** - レジューム機能とAI処理の包括的統合
+- 📦 **単一実行ファイル** - 352MB完全版配布ファイル（Python環境不要）
+- 📝 **包括的ログシステム** - タイムスタンプ付き詳細ログとエラー追跡
 
 ### v2.1.0 (2025-01-16) - 途中再開機能実装 🔄
 - ✨ **途中再開機能** - 処理中断時の自動検出・途中再開対応
@@ -488,6 +491,6 @@ python test_environment.py
 ---
 
 **作成者**: SumihisaYutani  
-**バージョン**: 2.1.0  
-**最終更新**: 2025-01-16  
-**最新成果**: 途中再開機能完全実装・セッション管理・フレーム単位復旧
+**バージョン**: 2.2.0  
+**最終更新**: 2025-08-19  
+**最新成果**: GPU加速AI完全版完成・352MB単一実行ファイル・配布準備完了
