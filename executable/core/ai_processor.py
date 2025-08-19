@@ -8,6 +8,7 @@ import tempfile
 import subprocess
 import logging
 import psutil
+import threading
 from pathlib import Path
 from typing import Dict, List, Optional, Any, Callable
 from PIL import Image
@@ -20,6 +21,14 @@ from .performance_monitor import OptimizedParallelProcessor, PerformanceMonitor
 
 logger = logging.getLogger(__name__)
 
+try:
+    from waifu2x_ncnn_py import Waifu2x
+    WAIFU2X_NCNN_PY_AVAILABLE = True
+    logger.info("waifu2x_ncnn_py library is available")
+except ImportError:
+    WAIFU2X_NCNN_PY_AVAILABLE = False
+    logger.warning("waifu2x_ncnn_py library not available")
+
 class AIProcessor:
     """Handles AI-based image upscaling using available backends"""
     
@@ -28,13 +37,13 @@ class AIProcessor:
         self.gpu_info = gpu_info
         self.best_backend = gpu_info.get('best_backend', 'cpu')
         
+        # Initialize parallel processor settings first
+        self.parallel_processor = None
+        self.use_parallel_processing = True  # Enable by default for GPU backends
+        
         # Initialize backend
         self.backend = None
         self._initialize_backend()
-        
-        # Initialize parallel processor for optimized performance
-        self.parallel_processor = None
-        self.use_parallel_processing = True  # Enable by default for GPU backends
         
         logger.info(f"AIProcessor initialized - Backend: {self.best_backend}")
     
@@ -42,25 +51,41 @@ class AIProcessor:
         """Initialize the best available AI backend"""
         try:
             logger.info(f"Initializing backend for: {self.best_backend}")
+            logger.info(f"WAIFU2X_NCNN_PY_AVAILABLE: {WAIFU2X_NCNN_PY_AVAILABLE}")
             
             # Always try Waifu2x first for any GPU backend
             if self.best_backend in ['nvidia', 'nvidia_cuda', 'amd', 'amd_rocm', 'vulkan', 'intel']:
                 logger.info("Attempting to initialize Waifu2x backend")
-                self.backend = Waifu2xExecutableBackend(self.resource_manager, self.gpu_info)
+                # Try Python library first, then fallback to executable
+                if WAIFU2X_NCNN_PY_AVAILABLE:
+                    logger.info("Using waifu2x_ncnn_py library backend")
+                    try:
+                        self.backend = Waifu2xPythonBackend(self.gpu_info)
+                        logger.info(f"Waifu2xPythonBackend created, checking availability...")
+                    except Exception as e:
+                        logger.error(f"Failed to create Waifu2xPythonBackend: {e}")
+                        self.backend = None
+                else:
+                    logger.info("waifu2x_ncnn_py not available, using waifu2x executable backend")
+                    self.backend = Waifu2xExecutableBackend(self.resource_manager, self.gpu_info)
                 
-                if self.backend.is_available():
+                if self.backend and self.backend.is_available():
                     logger.info(f"Waifu2x backend initialized successfully: {type(self.backend).__name__}")
-                    # Initialize parallel processor for GPU backends
+                    # Initialize parallel processor for all backends (GPU優先だが、CPUでも並列処理を有効化)
                     if self.use_parallel_processing:
                         self.parallel_processor = OptimizedParallelProcessor(self)
-                        logger.info("Parallel processing enabled for optimized GPU utilization")
+                        logger.info("Parallel processing enabled for optimized processing")
                     return
                 else:
-                    logger.warning("Waifu2x backend not available, falling back to simple upscaling")
+                    logger.warning(f"Waifu2x backend not available (backend={self.backend}, available={self.backend.is_available() if self.backend else 'None'}), falling back to simple upscaling")
             
             # Fallback to simple upscaling
             logger.info("Using simple upscaling backend")
             self.backend = SimpleUpscalingBackend()
+            # CPUモードでも並列処理を初期化（効率向上のため）
+            if self.use_parallel_processing:
+                self.parallel_processor = OptimizedParallelProcessor(self)
+                logger.info("Parallel processing enabled for CPU mode")
                 
         except Exception as e:
             logger.error(f"Failed to initialize AI backend: {e}")
@@ -81,12 +106,22 @@ class AIProcessor:
         
         total_frames = len(frame_paths)
         
-        # Add GPU debug information
+        # Add GPU debug information and initial status update
         backend_info = self.get_backend_info()
+        gpu_mode_active = backend_info.get('gpu_mode', False)
+        
         if progress_dialog:
             progress_dialog.window.after(0, lambda: progress_dialog.add_log_message(f"DEBUG: AI Backend: {type(self.backend).__name__}"))
-            progress_dialog.window.after(0, lambda: progress_dialog.add_log_message(f"DEBUG: GPU Mode: {backend_info.get('gpu_mode', False)}"))
+            progress_dialog.window.after(0, lambda: progress_dialog.add_log_message(f"DEBUG: GPU Mode: {gpu_mode_active}"))
             progress_dialog.window.after(0, lambda: progress_dialog.add_log_message(f"DEBUG: Best Backend: {self.best_backend}"))
+            
+            # Update initial GPU status to show it's ready for processing
+            if gpu_mode_active:
+                progress_dialog.window.after(0, lambda: progress_dialog.update_gpu_status(
+                    False, 0, f"GPU Ready: {self.best_backend.upper()} backend initialized"))
+            else:
+                progress_dialog.window.after(0, lambda: progress_dialog.update_gpu_status(
+                    False, 0, "CPU Mode: No GPU acceleration available"))
             if isinstance(self.backend, Waifu2xExecutableBackend):
                 progress_dialog.window.after(0, lambda: progress_dialog.add_log_message(f"DEBUG: Waifu2x GPU ID: {self.backend.gpu_id}"))
                 progress_dialog.window.after(0, lambda: progress_dialog.add_log_message(f"DEBUG: Waifu2x Path: {self.backend.waifu2x_path}"))
@@ -96,13 +131,24 @@ class AIProcessor:
         logger.info(f"DEBUG: GPU Mode: {backend_info.get('gpu_mode', False)}")
         logger.info(f"DEBUG: Best Backend: {self.best_backend}")
         
-        # Use parallel processing if available and beneficial
-        if self.parallel_processor and total_frames > 10:
+        # Use parallel processing if available and beneficial (降低門檻以確保使用)
+        logger.info(f"DEBUG: Parallel processor available: {self.parallel_processor is not None}")
+        logger.info(f"DEBUG: Total frames: {total_frames}, threshold: >3")
+        logger.info(f"DEBUG: GPU mode active: {gpu_mode_active}")
+        logger.info(f"DEBUG: Backend type: {type(self.backend).__name__}")
+        logger.info(f"DEBUG: Parallel processing condition: {self.parallel_processor and total_frames > 3}")
+        
+        # 並列処理条件を緩和（3フレーム以上で並列処理を使用）
+        if self.parallel_processor and total_frames > 3:
             if progress_dialog:
                 progress_dialog.window.after(0, lambda: progress_dialog.add_log_message("INFO: Using optimized parallel processing"))
                 # GPU処理開始を通知
-                progress_dialog.window.after(0, lambda: progress_dialog.update_gpu_status(
-                    True, 50, f"Initializing parallel AI processing ({total_frames} frames)"))
+                if gpu_mode_active:
+                    progress_dialog.window.after(0, lambda: progress_dialog.update_gpu_status(
+                        True, 75, f"Starting GPU parallel processing ({total_frames} frames)"))
+                else:
+                    progress_dialog.window.after(0, lambda: progress_dialog.update_gpu_status(
+                        True, 50, f"Starting CPU parallel processing ({total_frames} frames)"))
             logger.info("Using optimized parallel processing for improved GPU utilization")
             
             processed_frames = self.parallel_processor.process_frames_parallel(
@@ -114,16 +160,35 @@ class AIProcessor:
             logger.info(f"Performance Report: {report['throughput_fps']:.2f} fps, "
                        f"success rate: {report['success_rate']:.1%}")
             
-            # GPU処理完了を通知
-            if progress_dialog:
+            # 並列処理全体の完了を通知（すべてのフレームが処理された場合のみ）
+            if progress_dialog and len(processed_frames) >= total_frames:
                 progress_dialog.window.after(0, lambda: progress_dialog.update_gpu_status(
-                    False, 0, f"AI processing completed! ({report['throughput_fps']:.1f} fps average)"))
+                    False, 0, f"All frames completed! ({report['throughput_fps']:.1f} fps average)"))
+            elif progress_dialog:
+                # 部分完了の場合は継続中表示
+                progress_dialog.window.after(0, lambda: progress_dialog.update_gpu_status(
+                    True, 80, f"Processing batch completed ({len(processed_frames)}/{total_frames})"))
             
             return processed_frames
         
         # Fallback to sequential processing
+        logger.info("INFO: Falling back to sequential processing")
+        if self.parallel_processor is None:
+            logger.info("REASON: Parallel processor not initialized")
+        elif total_frames <= 3:
+            logger.info(f"REASON: Too few frames ({total_frames} <= 3)")
+        else:
+            logger.info("REASON: Unknown condition")
+            
         if progress_dialog:
             progress_dialog.window.after(0, lambda: progress_dialog.add_log_message("INFO: Using sequential processing"))
+            # GPU処理開始を通知
+            if gpu_mode_active:
+                progress_dialog.window.after(0, lambda: progress_dialog.update_gpu_status(
+                    True, 60, f"Starting GPU sequential processing ({total_frames} frames)"))
+            else:
+                progress_dialog.window.after(0, lambda: progress_dialog.update_gpu_status(
+                    True, 30, f"Starting CPU sequential processing ({total_frames} frames)"))
         logger.info("Using sequential processing")
         
         return self._process_frames_sequential(frame_paths, output_dir, scale_factor, progress_callback, progress_dialog)
@@ -179,6 +244,16 @@ class AIProcessor:
             self._cleanup_memory_between_batches()
         
         logger.info(f"Successfully processed {len(processed_frames)}/{total_frames} frames")
+        
+        # 逐次処理完了の通知
+        if progress_dialog:
+            if len(processed_frames) >= total_frames:
+                progress_dialog.window.after(0, lambda: progress_dialog.update_gpu_status(
+                    False, 0, f"Sequential processing completed! ({len(processed_frames)} frames)"))
+            else:
+                progress_dialog.window.after(0, lambda: progress_dialog.update_gpu_status(
+                    False, 0, f"Processing finished ({len(processed_frames)}/{total_frames} successful)"))
+        
         return processed_frames
     
     def _cleanup_memory_between_batches(self):
@@ -592,3 +667,128 @@ class SimpleUpscalingBackend:
     def cleanup(self):
         """Cleanup backend resources"""
         pass  # Nothing to cleanup for simple backend
+
+
+class Waifu2xPythonBackend:
+    """Waifu2x backend using waifu2x_ncnn_py library"""
+    
+    def __init__(self, gpu_info: Dict):
+        self.gpu_info = gpu_info
+        self.gpu_id = self._determine_gpu_id()
+        self.waifu2x = None
+        self.current_scale = 2.0
+        self._processing_lock = threading.Lock()  # GPU処理の同期用
+        self._initialize_waifu2x()
+        
+    def _determine_gpu_id(self) -> int:
+        """Determine best GPU ID to use"""
+        # Prefer AMD Radeon RX Vega (GPU 0) for Vega 56
+        if self.gpu_info.get('amd', {}).get('available'):
+            logger.info("Using AMD Radeon RX Vega (GPU 0) for waifu2x_ncnn_py")
+            return 0  # AMD GPU (Radeon RX Vega)
+        elif self.gpu_info.get('nvidia', {}).get('available'):
+            logger.info("Using NVIDIA GPU (GPU 0) for waifu2x_ncnn_py")
+            return 0  # NVIDIA GPU
+        else:
+            logger.info("Attempting to use GPU 0 (Radeon RX Vega) for waifu2x_ncnn_py")
+            return 0  # Default to GPU 0
+    
+    def _initialize_waifu2x(self):
+        """Initialize waifu2x instance"""
+        try:
+            logger.info(f"Initializing waifu2x with GPU ID: {self.gpu_id}")
+            # Initialize with optimal settings for Vega 56
+            # Based on Vega architecture optimizations
+            self.current_scale = 2.0  # Store scale separately
+            self.waifu2x = Waifu2x(
+                gpuid=self.gpu_id,
+                scale=int(self.current_scale),  # Ensure integer scale
+                noise=3,  # High quality noise reduction
+                tilesize=400,  # Optimal for Vega 56's 8GB memory
+                model="models-cunet",  # Best quality model
+                tta_mode=False  # Disable for performance
+            )
+            logger.info(f"SUCCESS: Waifu2x_ncnn_py initialized with GPU {self.gpu_id}, scale={self.current_scale}")
+        except Exception as e:
+            logger.error(f"FAILED: Failed to initialize waifu2x_ncnn_py: {e}")
+            import traceback
+            logger.error(f"Full traceback: {traceback.format_exc()}")
+            self.waifu2x = None
+            self.current_scale = 2.0
+    
+    def is_available(self) -> bool:
+        """Check if Waifu2x backend is available"""
+        return self.waifu2x is not None and WAIFU2X_NCNN_PY_AVAILABLE
+    
+    def upscale_image(self, input_path: str, output_path: str, scale_factor: float = 2.0, progress_dialog=None) -> bool:
+        """Upscale image using waifu2x_ncnn_py"""
+        if not self.is_available():
+            return False
+            
+        # GPU処理を同期化（並列処理でのリソース競合を防止）
+        with self._processing_lock:
+            try:
+                # GPU処理開始を通知
+                if progress_dialog:
+                    progress_dialog.window.after(0, lambda: progress_dialog.update_gpu_status(
+                        True, 75, f"Processing with waifu2x_ncnn_py (GPU 0)"))
+                
+                # Check if scale changed - need to reinitialize if different
+                if scale_factor != self.current_scale:
+                    logger.info(f"Scale changed from {self.current_scale} to {scale_factor}, reinitializing waifu2x...")
+                    self.current_scale = int(scale_factor)
+                    self.waifu2x = Waifu2x(
+                        gpuid=self.gpu_id,
+                        scale=int(self.current_scale),  # Ensure integer scale
+                        noise=3,
+                        tilesize=400,
+                        model="models-cunet",
+                        tta_mode=False
+                    )
+                
+                # Process image
+                with Image.open(input_path) as image:
+                    # Convert RGBA to RGB if necessary
+                    if image.mode == 'RGBA':
+                        background = Image.new('RGB', image.size, (255, 255, 255))
+                        background.paste(image, mask=image.split()[-1])
+                        image = background
+                    elif image.mode != 'RGB':
+                        image = image.convert('RGB')
+                    
+                    # Process with waifu2x
+                    upscaled_image = self.waifu2x.process_pil(image)
+                    
+                    # Save result
+                    upscaled_image.save(output_path, 'PNG', quality=95)
+                    
+                    # GPU処理継続中の通知（個別フレーム完了は全体完了ではない）
+                    if progress_dialog:
+                        progress_dialog.window.after(0, lambda: progress_dialog.add_log_message(f"INFO: Waifu2x_ncnn_py frame processing successful"))
+                        # まだ処理中なのでアクティブ状態を継続
+                        progress_dialog.window.after(0, lambda: progress_dialog.update_gpu_status(
+                            True, 60, "Waifu2x frame processed, continuing..."))
+                    
+                    return True
+                    
+            except Exception as e:
+                logger.error(f"Waifu2x_ncnn_py processing error: {e}")
+                if progress_dialog:
+                    progress_dialog.window.after(0, lambda: progress_dialog.add_log_message(f"ERROR: Waifu2x_ncnn_py processing failed: {e}"))
+                return False
+    
+    def get_info(self) -> Dict[str, Any]:
+        """Get backend information"""
+        return {
+            "backend": "waifu2x_ncnn_py",
+            "available": self.is_available(),
+            "gpu_id": self.gpu_id,
+            "gpu_mode": self.gpu_id >= 0,
+            "library_version": "waifu2x_ncnn_py 2.0.0+"
+        }
+    
+    def cleanup(self):
+        """Cleanup backend resources"""
+        if self.waifu2x:
+            del self.waifu2x
+            self.waifu2x = None

@@ -12,11 +12,34 @@ from pathlib import Path
 from typing import Optional, Dict, Any
 import tkinter as tk
 
-# Configure logging for debug version
-logging.basicConfig(
-    level=logging.DEBUG,
-    format='%(asctime)s - %(levelname)s - %(name)s - %(message)s'
-)
+# Configure logging for debug version with file output
+def setup_logging():
+    """Set up logging to both console and file"""
+    import datetime
+    
+    # Create logs directory
+    logs_dir = Path.home() / "UpScaleApp_Logs"
+    logs_dir.mkdir(exist_ok=True)
+    
+    # Generate log filename with timestamp
+    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    log_file = logs_dir / f"upscale_app_{timestamp}.log"
+    
+    # Configure root logger
+    logging.basicConfig(
+        level=logging.DEBUG,
+        format='%(asctime)s - %(levelname)s - %(name)s - %(message)s',
+        handlers=[
+            logging.FileHandler(log_file, encoding='utf-8'),
+            logging.StreamHandler(sys.stdout)
+        ]
+    )
+    
+    logger = logging.getLogger(__name__)
+    logger.info(f"Logging initialized - Log file: {log_file}")
+    return log_file
+
+log_file_path = setup_logging()
 logger = logging.getLogger(__name__)
 
 class UpScaleApp:
@@ -83,7 +106,8 @@ class UpScaleApp:
                 video_processor=self.video_processor,
                 ai_processor=self.ai_processor,
                 gpu_info=gpu_info,
-                session_manager=self.session_manager
+                session_manager=self.session_manager,
+                log_file_path=log_file_path  # ログファイルパスを渡す
             )
             
             logger.info("All components initialized successfully")

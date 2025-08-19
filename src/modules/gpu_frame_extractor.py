@@ -164,7 +164,7 @@ class GPUFrameExtractor:
         # 入力ファイルと出力設定
         cmd.extend([
             '-i', str(video_path),
-            '-vf', 'hwdownload,format=rgb24',  # GPU→CPUデータ転送
+            '-vf', 'fps=source_tb,hwdownload,format=rgb24',  # GPU→CPUデータ転送
             '-threads', '1',  # GPUメイン処理時はCPUスレッド最小限に
             '-preset', 'ultrafast',  # 最高速設定
             '-y',
@@ -286,7 +286,7 @@ class GPUFrameExtractor:
             '-ss', f'{start_time:.3f}',
             '-i', str(video_path),
             '-t', f'{duration:.3f}',
-            '-vf', 'hwdownload,format=rgb24',
+            '-vf', 'fps=source_tb,hwdownload,format=rgb24',
             '-threads', '1',
             '-preset', 'ultrafast',
             '-y',
@@ -568,13 +568,10 @@ class GPUFrameExtractor:
                     progress_dialog.window.after(0, 
                         lambda b=batch_num: progress_dialog.add_log_message(f"ERROR: GPU batch {b + 1} failed"))
                 
-                # 連続5回失敗、または失敗率50%以上で全体を失敗扱い
-                consecutive_failures = failed_batches
-                failure_rate = failed_batches / (batch_num + 1)
-                
-                if consecutive_failures >= 5 or (batch_num >= 10 and failure_rate > 0.5):
-                    logger.error(f"Too many GPU batch failures: {failed_batches} failures, {failure_rate:.1%} failure rate")
-                    raise RuntimeError(f"GPU batch processing unstable ({failed_batches} failures)")
+                # 3回失敗したら全体を失敗扱い
+                if failed_batches >= 3:
+                    logger.error("Too many GPU batch failures, aborting")
+                    raise RuntimeError(f"Multiple GPU batch failures ({failed_batches})")
         
         logger.info(f"Safe GPU batched extraction complete: {len(all_frame_paths)} total frames")
         return all_frame_paths
@@ -582,97 +579,46 @@ class GPUFrameExtractor:
     def _extract_gpu_batch_segment_safe(self, video_path: Path, batch_num: int, 
                                       start_time: float, duration: float, frame_offset: int,
                                       progress_dialog=None) -> List[str]:
-        """安全なGPUバッチセグメント抽出（シンプルコマンド版）"""
+        """安全なGPUバッチセグメント抽出"""
         
         batch_dir = self.temp_dir / 'frames' / f'gpu_batch_{batch_num:03d}'
         batch_dir.mkdir(parents=True, exist_ok=True)
         
         ffmpeg_path = self.resource_manager.get_binary_path('ffmpeg')
-        
-        # より安全でシンプルなコマンド構成
         cmd = [
             ffmpeg_path,
-            '-ss', f'{start_time:.3f}',  # シーク位置を入力前に指定（より高速）
+            '-hwaccel', self.selected_method['hwaccel'],
+            '-ss', f'{start_time:.3f}',
             '-i', str(video_path),
             '-t', f'{duration:.3f}',
-            '-vf', 'scale=trunc(iw/2)*2:trunc(ih/2)*2',  # 偶数サイズに調整
+            '-vf', 'hwdownload,format=rgb24',
             '-threads', '1',
-            '-preset', 'ultrafast',  # 最高速プリセット
-            '-pix_fmt', 'rgb24',
-            '-loglevel', 'warning',
+            '-preset', 'faster',
+            '-loglevel', 'error',
             '-y',
             str(batch_dir / 'frame_%06d.png')
         ]
         
-        logger.debug(f"GPU batch {batch_num + 1} command: {' '.join(cmd[:8])}...")
-        
         try:
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=180,
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=300,
                                   creationflags=subprocess.CREATE_NO_WINDOW)
             
             if result.returncode != 0:
-                logger.error(f"GPU batch {batch_num + 1} stderr: {result.stderr}")
-                logger.error(f"GPU batch {batch_num + 1} stdout: {result.stdout}")
-                
-                # GPU加速を外したフォールバックコマンド
-                fallback_cmd = [
-                    ffmpeg_path,
-                    '-ss', f'{start_time:.3f}',
-                    '-i', str(video_path),
-                    '-t', f'{duration:.3f}',
-                    '-vf', 'scale=trunc(iw/2)*2:trunc(ih/2)*2',
-                    '-threads', '1',
-                    '-preset', 'ultrafast',
-                    '-loglevel', 'warning',
-                    '-y',
-                    str(batch_dir / 'frame_%06d.png')
-                ]
-                
-                logger.info(f"Retrying GPU batch {batch_num + 1} without hardware acceleration")
-                result = subprocess.run(fallback_cmd, capture_output=True, text=True, timeout=180,
-                                      creationflags=subprocess.CREATE_NO_WINDOW)
-                
-                if result.returncode != 0:
-                    raise RuntimeError(f"Batch extraction failed even without GPU: {result.stderr}")
+                raise RuntimeError(f"Safe GPU batch extraction failed: {result.stderr}")
             
             batch_frames = sorted(batch_dir.glob("frame_*.png"))
-            if not batch_frames:
-                raise RuntimeError(f"No frames extracted in batch {batch_num + 1}")
-            
             renamed_frames = []
             
             for i, frame_file in enumerate(batch_frames):
                 global_frame_num = frame_offset + i + 1
                 new_name = self.temp_dir / 'frames' / f'frame_{global_frame_num:06d}.png'
                 
-                # 安全なファイル移動
-                try:
-                    if new_name.exists():
-                        new_name.unlink()
-                    frame_file.rename(new_name)
-                    renamed_frames.append(str(new_name))
-                except Exception as rename_error:
-                    logger.warning(f"Failed to rename {frame_file}: {rename_error}")
-                    # シャローコピーで対応
-                    import shutil
-                    shutil.copy2(str(frame_file), str(new_name))
-                    frame_file.unlink(missing_ok=True)
-                    renamed_frames.append(str(new_name))
+                frame_file.rename(new_name)
+                renamed_frames.append(str(new_name))
             
-            # バッチディレクトリクリーンアップ
-            try:
-                for remaining_file in batch_dir.glob("*"):
-                    remaining_file.unlink(missing_ok=True)
-                batch_dir.rmdir()
-            except Exception:
-                pass  # クリーンアップ失敗は無視
-            
-            logger.info(f"GPU batch {batch_num + 1} successful: {len(renamed_frames)} frames")
+            batch_dir.rmdir()
             return renamed_frames
             
-        except subprocess.TimeoutExpired:
-            logger.error(f"GPU batch {batch_num + 1} timed out")
-            raise RuntimeError(f"Batch {batch_num + 1} processing timed out")
         except Exception as e:
             logger.error(f"Safe GPU batch segment extraction failed: {e}")
             raise

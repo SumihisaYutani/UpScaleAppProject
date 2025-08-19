@@ -121,12 +121,12 @@ class OptimizedParallelProcessor:
         self.monitor = PerformanceMonitor()
         
         # 動的並列度調整 - GPU効率優先
-        self.current_workers = 1  # GPU集中処理から開始
+        self.current_workers = min(3, self.max_workers)  # 3ワーカーで開始（GPU効率とのバランス）
         self.adjustment_interval = 15  # 15フレームごとに調整
         self.processed_count = 0
         self.gpu_intensive_mode = True  # GPU内並列化優先モード
         
-        logger.info(f"OptimizedParallelProcessor initialized - Max workers: {self.max_workers}")
+        logger.info(f"OptimizedParallelProcessor initialized - Max workers: {self.max_workers}, Current workers: {self.current_workers}")
     
     def process_frames_parallel(self, frame_paths: List[str], output_dir: str, 
                               scale_factor: float = 2.0,
@@ -140,7 +140,7 @@ class OptimizedParallelProcessor:
         total_frames = len(frame_paths)
         processed_frames = []
         
-        logger.info(f"Starting parallel processing of {total_frames} frames")
+        logger.info(f"Starting parallel processing of {total_frames} frames with {self.current_workers} workers")
         
         # フレームを分割してワーカーに配布
         with concurrent.futures.ThreadPoolExecutor(max_workers=self.current_workers) as executor:
@@ -215,9 +215,10 @@ class OptimizedParallelProcessor:
             
             # デバッグ情報（最初の数フレームのみ）
             if progress_dialog and frame_index < 3:
+                worker_id = threading.current_thread().name
                 progress_dialog.window.after(0, 
-                    lambda idx=frame_index: progress_dialog.add_log_message(
-                        f"DEBUG: Processing frame {idx + 1} in parallel worker"))
+                    lambda idx=frame_index, wid=worker_id: progress_dialog.add_log_message(
+                        f"DEBUG: Processing frame {idx + 1} in parallel worker {wid}"))
             
             success = self.ai_processor.backend.upscale_image(
                 frame_path, output_path, scale_factor, 
@@ -235,12 +236,12 @@ class OptimizedParallelProcessor:
                         10, 
                         f"Frame {frame_index + 1} completed ({processing_time:.2f}s)"
                     ))
-                # 0.5秒後にアイドル状態に戻す
-                progress_dialog.window.after(500, 
+                # 次のフレーム処理準備中として継続（アイドルに戻さない）
+                progress_dialog.window.after(200, 
                     lambda: progress_dialog.update_gpu_status(
-                        False, 
-                        0, 
-                        "Ready for next frame..."
+                        True,  # アクティブ状態を継続
+                        25,    # 低めの利用率で準備中を示す
+                        f"Processing batch... ({min(frame_index + 2, self.total_frames)}/{self.total_frames})"
                     ))
             
             return success, processing_time

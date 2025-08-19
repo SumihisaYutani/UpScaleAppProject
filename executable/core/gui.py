@@ -116,17 +116,24 @@ class ProcessingStepTracker:
 class ProgressDialog:
     """Progress dialog for processing operations"""
     
-    def __init__(self, parent, temp_dir=None):
+    def __init__(self, parent, temp_dir=None, log_file_path=None):
+        logger.info("DEBUG: ProgressDialog.__init__ called")
         self.parent = parent
         self.step_tracker = ProcessingStepTracker()
         self.temp_dir = temp_dir  # Store temp directory for cleanup
         self.video_processor = None  # Store video processor reference for cleanup
+        self.log_file_path = log_file_path  # Store log file path
         
+        # Initialize log messages list and window
+        self.log_messages = []
+        self.log_window = None
+        
+        logger.info(f"DEBUG: GUI_AVAILABLE={GUI_AVAILABLE}, ctk={ctk is not None}")
         if GUI_AVAILABLE and ctk:
             # Use CustomTkinter
             self.window = ctk.CTkToplevel(parent)
             self.window.title("Processing Video")
-            self.window.geometry("875x750")
+            self.window.geometry("875x704")  # 横幅は元のまま875、縦幅だけ938 * 0.75 = 704
             self.window.resizable(False, False)
             
             # Make modal
@@ -135,14 +142,14 @@ class ProgressDialog:
             
             # Center on parent
             parent.update_idletasks()
-            x = (parent.winfo_x() + parent.winfo_width() // 2) - 300
-            y = (parent.winfo_y() + parent.winfo_height() // 2) - 250
+            x = (parent.winfo_x() + parent.winfo_width() // 2) - 437  # 875/2 = 437.5
+            y = (parent.winfo_y() + parent.winfo_height() // 2) - 352  # 704/2 = 352
             self.window.geometry(f"+{x}+{y}")
         else:
             # Fallback to standard tkinter
             self.window = tk.Toplevel(parent)
             self.window.title("Processing Video")
-            self.window.geometry("675x672")
+            self.window.geometry("675x630")  # 横幅は元のまま675、縦幅だけ840 * 0.75 = 630
             self.window.resizable(False, False)
             
             # Make modal
@@ -151,13 +158,20 @@ class ProgressDialog:
             
             # Center on parent
             parent.update_idletasks()
-            x = parent.winfo_x() + (parent.winfo_width() // 2) - 275
-            y = parent.winfo_y() + (parent.winfo_height() // 2) - 225
+            x = parent.winfo_x() + (parent.winfo_width() // 2) - 337  # 675/2 = 337.5
+            y = parent.winfo_y() + (parent.winfo_height() // 2) - 315  # 630/2 = 315
             self.window.geometry(f"+{x}+{y}")
         
         self.cancelled = False
         self.current_process = None  # Track current subprocess
-        self._setup_ui()
+        logger.info("DEBUG: About to call _setup_ui()")
+        try:
+            self._setup_ui()
+            logger.info("DEBUG: _setup_ui() completed successfully")
+        except Exception as e:
+            logger.error(f"DEBUG: Error in _setup_ui(): {e}")
+            import traceback
+            logger.error(f"DEBUG: Traceback: {traceback.format_exc()}")
         
     def _setup_ui(self):
         """Setup progress dialog UI"""
@@ -301,33 +315,42 @@ class ProgressDialog:
             
             steps_frame.pack(pady=(0, 10))
             
-            # Log button section
-            log_button_frame = ctk.CTkFrame(self.main_frame)
-            log_button_frame.pack(fill="x", padx=10, pady=(0, 10))
+            # Buttons section - horizontal layout to save space
+            buttons_frame = ctk.CTkFrame(self.main_frame)
+            buttons_frame.pack(fill="x", padx=10, pady=(5, 10))
             
+            # ログ表示ボタン（左側）
             self.log_button = ctk.CTkButton(
-                log_button_frame,
-                text="📋 詳細ログを表示",
+                buttons_frame,
+                text="📋 詳細ログ",
                 command=self._show_log_window,
-                width=150,
-                height=30
+                width=120,
+                height=28
             )
-            self.log_button.pack(pady=10)
+            self.log_button.pack(side="left", padx=(10, 5), pady=8)
             
-            # Initialize log window as None
-            self.log_window = None
-            self.log_messages = []
+            # ログファイルを開くボタン（中央）
+            if self.log_file_path:
+                self.open_log_button = ctk.CTkButton(
+                    buttons_frame,
+                    text="📁 ログファイル",
+                    command=self._open_log_file,
+                    width=120,
+                    height=28
+                )
+                self.open_log_button.pack(side="left", padx=5, pady=8)
             
-            # Cancel button
+            # Cancel button（右側、目立つ色）
             self.cancel_button = ctk.CTkButton(
-                self.main_frame,
-                text="Cancel",
+                buttons_frame,
+                text="❌ キャンセル",
                 command=self._on_cancel,
-                fg_color="transparent",
-                border_width=2,
-                text_color=("gray10", "gray90")
+                fg_color="#dc3545",
+                hover_color="#c82333",
+                width=120,
+                height=28
             )
-            self.cancel_button.pack(pady=(10, 0))
+            self.cancel_button.pack(side="right", padx=(5, 10), pady=8)
         else:
             # Standard tkinter fallback
             main_frame = ttk.Frame(self.window)
@@ -531,17 +554,32 @@ class ProgressDialog:
     
     def _show_log_window(self):
         """Show separate log window"""
-        if self.log_window is None or not self.log_window.winfo_exists():
+        try:
+            logger.info("DEBUG: _show_log_window called")
+            
+            # Check if log window already exists and is valid
+            if hasattr(self, 'log_window') and self.log_window is not None:
+                try:
+                    # Try to check if window still exists
+                    if self.log_window.winfo_exists():
+                        logger.info("DEBUG: Log window already exists, bringing to front")
+                        self.log_window.lift()
+                        self.log_window.focus_set()
+                        return
+                except (AttributeError, tk.TclError):
+                    logger.info("DEBUG: Previous log window was destroyed")
+                    self.log_window = None
+            
+            # Create new window only if none exists
+            logger.info("DEBUG: Creating new log window")
             if GUI_AVAILABLE and ctk:
                 # CustomTkinter version
                 self.log_window = ctk.CTkToplevel(self.window)
                 self.log_window.title("処理ログ")
                 self.log_window.geometry("600x400")
                 
-                # Position relative to main dialog
-                x = self.window.winfo_x() + self.window.winfo_width() + 10
-                y = self.window.winfo_y()
-                self.log_window.geometry(f"+{x}+{y}")
+                # Simple positioning
+                self.log_window.geometry("+100+100")
                 
                 # Log display
                 log_frame = ctk.CTkFrame(self.log_window)
@@ -557,39 +595,54 @@ class ProgressDialog:
                 # Scrollable text area
                 self.log_window.log_text = ctk.CTkTextbox(
                     log_frame,
-                    font=ctk.CTkFont(size=10, family="Consolas")
+                    font=ctk.CTkFont(size=10, family="Courier")
                 )
                 self.log_window.log_text.pack(fill="both", expand=True, padx=5, pady=5)
+                
             else:
                 # Standard tkinter version
+                import tkinter as tk
+                from tkinter import ttk, scrolledtext
+                
                 self.log_window = tk.Toplevel(self.window)
                 self.log_window.title("処理ログ")
-                self.log_window.geometry("600x400")
-                
-                # Position relative to main dialog
-                x = self.window.winfo_x() + self.window.winfo_width() + 10
-                y = self.window.winfo_y()
-                self.log_window.geometry(f"+{x}+{y}")
+                self.log_window.geometry("600x400+120+120")
                 
                 # Log display
                 log_frame = ttk.LabelFrame(self.log_window, text="処理ログメッセージ", padding=10)
                 log_frame.pack(fill="both", expand=True, padx=10, pady=10)
                 
-                from tkinter import scrolledtext
                 self.log_window.log_text = scrolledtext.ScrolledText(
                     log_frame,
-                    font=("Consolas", 9)
+                    font=("Courier", 9)
                 )
                 self.log_window.log_text.pack(fill="both", expand=True)
             
-            # Add existing messages
-            for msg in self.log_messages:
-                self.log_window.log_text.insert("end", msg + "\n")
-            self.log_window.log_text.see("end")
-        else:
-            # Bring window to front
-            self.log_window.lift()
-            self.log_window.focus()
+            # Set up window close callback to clean up reference
+            def on_log_window_close():
+                logger.info("DEBUG: Log window closed by user")
+                self.log_window = None
+            
+            self.log_window.protocol("WM_DELETE_WINDOW", on_log_window_close)
+            
+            # Add messages
+            if hasattr(self, 'log_messages') and self.log_messages:
+                for msg in self.log_messages:
+                    self.log_window.log_text.insert("end", msg + "\n")
+                self.log_window.log_text.see("end")
+            else:
+                self.log_window.log_text.insert("end", "[処理開始前] ログメッセージはありません\n")
+            
+            logger.info("DEBUG: Log window created successfully")
+            
+        except Exception as e:
+            logger.error(f"DEBUG: Error in _show_log_window: {e}")
+            # Simple fallback message
+            try:
+                import tkinter.messagebox as messagebox
+                messagebox.showinfo("ログウィンドウ", f"ログウィンドウの表示でエラーが発生しました。\nログファイルを直接確認してください。")
+            except:
+                pass
         
     def _on_cancel(self):
         """Handle cancel button"""
@@ -719,10 +772,11 @@ class ProgressDialog:
 class MainGUI:
     """Main GUI application window"""
     
-    def __init__(self, video_processor, ai_processor, gpu_info, session_manager=None):
+    def __init__(self, video_processor, ai_processor, gpu_info, session_manager=None, log_file_path=None):
         self.video_processor = video_processor
         self.ai_processor = ai_processor  
         self.gpu_info = gpu_info
+        self.log_file_path = log_file_path  # ログファイルパスを保存
         
         # Use provided session manager or create new one
         self.session_manager = session_manager or SessionManager()
@@ -1066,7 +1120,7 @@ class MainGUI:
             scale_combo = ttk.Combobox(
                 settings_frame,
                 textvariable=self.scale_var,
-                values=["1.5", "2.0", "2.5", "3.0", "4.0"],
+                values=["2.0", "4.0", "8.0"],
                 state="readonly",
                 width=10
             )
@@ -1141,17 +1195,29 @@ class MainGUI:
                 all_gpu_details.append(f"Intel: {gpu_name}")
             logger.info(f"Found {len(intel_gpus)} Intel GPUs: {[g.get('name') for g in intel_gpus]}")
         
-        # Count Vulkan devices (only if no other GPUs found)
+        # Count Vulkan devices (include all Vulkan devices that aren't already counted)
         vulkan_info = self.gpu_info.get('vulkan', {})
         if vulkan_info.get('available', False):
             vulkan_devices = vulkan_info.get('devices', [])
-            # If no discrete GPUs found, use Vulkan devices
-            if len(gpu_names) == 0:
-                for device in vulkan_devices:
-                    device_name = device.get('name', 'Vulkan Device')
+            logger.info(f"Found {len(vulkan_devices)} Vulkan devices: {[d.get('name') for d in vulkan_devices]}")
+            
+            # Add Vulkan devices that aren't duplicates of already found GPUs
+            for device in vulkan_devices:
+                device_name = device.get('name', 'Vulkan Device')
+                
+                # Check if this device is not already in our list (avoid duplicates)
+                is_duplicate = False
+                for existing_name in gpu_names:
+                    if device_name.lower() in existing_name.lower() or existing_name.lower() in device_name.lower():
+                        is_duplicate = True
+                        break
+                
+                if not is_duplicate:
                     gpu_names.append(device_name)
                     all_gpu_details.append(f"Vulkan: {device_name}")
-            logger.info(f"Found {len(vulkan_devices)} Vulkan devices: {[d.get('name') for d in vulkan_devices]}")
+                    logger.info(f"Added Vulkan device: {device_name}")
+                else:
+                    logger.info(f"Skipped duplicate Vulkan device: {device_name}")
         
         # Set total GPU count
         total_gpus = len(gpu_names)
@@ -1470,11 +1536,14 @@ Additional GPUs: +{additional_count} more"""
                 # Show progress dialog immediately on GUI thread
                 def create_progress_dialog():
                     nonlocal progress_dialog
+                    logger.info("DEBUG: Creating progress dialog...")
                     progress_dialog = ProgressDialog(self.root, temp_dir=temp_dir)
                     progress_dialog.video_processor = self.video_processor  # Pass reference for cleanup
                     progress_dialog.add_log_message("Initializing video processing...")
                     progress_dialog.update_progress(0, "Starting processing...")
+                    logger.info("DEBUG: Progress dialog created and initialized")
                 
+                logger.info("DEBUG: Scheduling progress dialog creation...")
                 self.root.after(0, create_progress_dialog)
                 
                 # Wait for progress dialog to be created
@@ -1753,9 +1822,15 @@ Additional GPUs: +{additional_count} more"""
         self.is_processing = False
         if GUI_AVAILABLE and ctk:
             self.process_button.configure(text="Start Processing", state="normal")
+            
+            # エラー時にログファイルのパスも表示
+            error_message = f"処理中にエラーが発生しました:\n\n{error_msg}"
+            if self.log_file_path:
+                error_message += f"\n\n詳細なログは以下のファイルで確認できます:\n{self.log_file_path}"
+            
             CTkMessagebox(
-                title="Processing Error",
-                message=f"Processing failed:\n\n{error_msg}",
+                title="Processing Error", 
+                message=error_message,
                 icon="cancel"
             )
         else:
@@ -1981,11 +2056,57 @@ Additional GPUs: +{additional_count} more"""
     
     def _upscale_with_tracking(self, frame_paths: List[str], scale_factor: float, 
                               progress_callback: Callable, progress_dialog) -> List[str]:
-        """Upscale frames with individual frame tracking for resume"""
+        """Upscale frames with individual frame tracking for resume using parallel processing"""
         output_dir = str(self.video_processor.temp_dir / "upscaled")
         Path(output_dir).mkdir(parents=True, exist_ok=True)
         
+        # Filter out already processed frames for efficiency
+        remaining_frames = []
         processed_frames = []
+        
+        for frame_path in frame_paths:
+            frame_name = Path(frame_path).stem
+            output_path = Path(output_dir) / f"{frame_name}_upscaled.png"
+            
+            if output_path.exists():
+                processed_frames.append(str(output_path))
+                self.session_manager.add_completed_frame(self.current_session_id, str(output_path))
+            else:
+                remaining_frames.append(frame_path)
+        
+        if not remaining_frames:
+            logger.info("All frames already processed, skipping upscaling")
+            return processed_frames
+        
+        logger.info(f"Processing {len(remaining_frames)} remaining frames (out of {len(frame_paths)} total)")
+        
+        # Use parallel processing through AIProcessor.upscale_frames instead of individual backend calls
+        def tracking_progress_callback(progress, message):
+            progress_callback(progress, message)
+        
+        try:
+            # Call the main upscale_frames method to use parallel processing
+            upscaled_frames = self.ai_processor.upscale_frames(
+                remaining_frames, output_dir, scale_factor, 
+                tracking_progress_callback, progress_dialog
+            )
+            
+            # Add completed frames to session tracking
+            for frame_path in upscaled_frames:
+                self.session_manager.add_completed_frame(self.current_session_id, frame_path)
+                processed_frames.append(frame_path)
+            
+            return processed_frames
+            
+        except Exception as e:
+            logger.error(f"Error in parallel frame processing: {e}")
+            # Fallback to sequential processing if parallel fails
+            return self._upscale_sequential_fallback(remaining_frames, output_dir, scale_factor, progress_callback, progress_dialog, processed_frames)
+    
+    def _upscale_sequential_fallback(self, frame_paths: List[str], output_dir: str, scale_factor: float, 
+                                   progress_callback: Callable, progress_dialog, processed_frames: List[str]) -> List[str]:
+        """Sequential fallback for frame processing"""
+        logger.info("Using sequential fallback processing")
         total_frames = len(frame_paths)
         
         for i, frame_path in enumerate(frame_paths):
@@ -1997,12 +2118,6 @@ Additional GPUs: +{additional_count} more"""
                 # Generate output path
                 frame_name = Path(frame_path).stem
                 output_path = Path(output_dir) / f"{frame_name}_upscaled.png"
-                
-                # Skip if already exists (safety check)
-                if output_path.exists():
-                    processed_frames.append(str(output_path))
-                    self.session_manager.add_completed_frame(self.current_session_id, str(output_path))
-                    continue
                 
                 # Upscale single frame
                 success = self.ai_processor.backend.upscale_image(
@@ -2027,3 +2142,50 @@ Additional GPUs: +{additional_count} more"""
                 continue
         
         return processed_frames
+    
+    def _open_log_file(self):
+        """ログファイルをシステムのデフォルトエディタで開く"""
+        try:
+            if self.log_file_path and Path(self.log_file_path).exists():
+                import subprocess
+                import platform
+                
+                system = platform.system()
+                if system == "Windows":
+                    # Windowsでメモ帳やデフォルトエディタで開く
+                    subprocess.run(['notepad', str(self.log_file_path)], check=False)
+                elif system == "Darwin":  # macOS
+                    subprocess.run(['open', str(self.log_file_path)], check=False)
+                else:  # Linux
+                    subprocess.run(['xdg-open', str(self.log_file_path)], check=False)
+                    
+                # ログファイルの場所もログに記録
+                logger.info(f"Opened log file: {self.log_file_path}")
+                
+                # GUIにもメッセージ表示
+                if GUI_AVAILABLE and ctk:
+                    CTkMessagebox(
+                        title="ログファイル",
+                        message=f"ログファイルを開きました:\n{self.log_file_path}",
+                        icon="info"
+                    )
+                
+            else:
+                error_msg = "ログファイルが見つかりません"
+                logger.warning(error_msg)
+                if GUI_AVAILABLE and ctk:
+                    CTkMessagebox(
+                        title="エラー",
+                        message=error_msg,
+                        icon="cancel"
+                    )
+                    
+        except Exception as e:
+            error_msg = f"ログファイルを開けませんでした: {e}"
+            logger.error(error_msg)
+            if GUI_AVAILABLE and ctk:
+                CTkMessagebox(
+                    title="エラー",
+                    message=error_msg,
+                    icon="cancel"
+                )

@@ -1,6 +1,7 @@
 """
 Video Processing Module for MP4 files
 Handles file validation, codec detection, and basic video operations
+With GPU-accelerated frame extraction support
 """
 
 import os
@@ -13,16 +14,45 @@ from config.settings import VIDEO_SETTINGS
 
 logger = logging.getLogger(__name__)
 
+# GPU加速機能のインポート（利用可能な場合）
+try:
+    from .fast_frame_extractor import FastFrameExtractor
+    from .gpu_frame_extractor import GPUFrameExtractor
+    GPU_ACCELERATION_AVAILABLE = True
+    logger.info("GPU acceleration modules loaded successfully")
+except ImportError as e:
+    GPU_ACCELERATION_AVAILABLE = False
+    FastFrameExtractor = None
+    GPUFrameExtractor = None
+    logger.warning(f"GPU acceleration not available: {e}")
+
 
 class VideoProcessor:
-    """Handles MP4 video file processing operations"""
+    """Handles MP4 video file processing operations with GPU acceleration support"""
     
-    def __init__(self):
+    def __init__(self, resource_manager=None, temp_dir=None, gpu_info=None):
         self.supported_formats = VIDEO_SETTINGS["supported_formats"]
         self.supported_codecs = VIDEO_SETTINGS["supported_codecs"]
         self.max_file_size = VIDEO_SETTINGS["max_file_size_gb"] * 1024 * 1024 * 1024
         self.max_duration = VIDEO_SETTINGS["max_duration_minutes"] * 60
         self.max_resolution = VIDEO_SETTINGS["max_resolution"]
+        
+        # GPU加速サポートの初期化
+        self.resource_manager = resource_manager
+        self.temp_dir = temp_dir
+        self.gpu_info = gpu_info or {}
+        self.fast_extractor = None
+        
+        # GPU加速フレーム抽出の初期化（利用可能な場合）
+        if GPU_ACCELERATION_AVAILABLE and resource_manager and temp_dir:
+            try:
+                self.fast_extractor = FastFrameExtractor(resource_manager, temp_dir, gpu_info)
+                logger.info("GPU-accelerated frame extraction initialized")
+            except Exception as e:
+                logger.warning(f"Failed to initialize GPU acceleration: {e}")
+                self.fast_extractor = None
+        else:
+            logger.info("Using standard frame extraction (no GPU acceleration)")
     
     def validate_video_file(self, file_path: str) -> Dict[str, any]:
         """
@@ -222,6 +252,78 @@ class VideoProcessor:
             "estimated_gpu_seconds": gpu_time,
             "estimated_cpu_minutes": cpu_time / 60,
             "estimated_gpu_minutes": gpu_time / 60
+        }
+    
+    def extract_frames_accelerated(self, video_path: str, progress_callback=None, 
+                                 progress_dialog=None) -> List[str]:
+        """
+        GPU加速対応の高速フレーム抽出
+        
+        Args:
+            video_path (str): 動画ファイルパス
+            progress_callback: 進捗コールバック関数
+            progress_dialog: 進捗ダイアログ
+            
+        Returns:
+            List[str]: 抽出されたフレームファイルパス
+        """
+        if self.fast_extractor:
+            try:
+                # 動画情報を取得
+                video_info = self._get_video_info(video_path)
+                if not video_info:
+                    logger.error("Failed to get video information for GPU extraction")
+                    return self._fallback_frame_extraction(video_path)
+                
+                total_frames = video_info.get("frame_count", 0)
+                duration = video_info.get("duration", 0)
+                
+                logger.info(f"Starting GPU-accelerated frame extraction: {total_frames} frames")
+                
+                # GPU加速フレーム抽出を実行
+                frame_paths = self.fast_extractor.extract_frames_parallel(
+                    Path(video_path), total_frames, duration, 
+                    progress_callback, progress_dialog
+                )
+                
+                if frame_paths:
+                    logger.info(f"GPU extraction successful: {len(frame_paths)} frames")
+                    return frame_paths
+                else:
+                    logger.warning("GPU extraction returned no frames, using fallback")
+                    return self._fallback_frame_extraction(video_path)
+                    
+            except Exception as e:
+                logger.error(f"GPU extraction failed: {e}")
+                logger.info("Falling back to standard extraction")
+                return self._fallback_frame_extraction(video_path)
+        else:
+            logger.info("GPU acceleration not available, using standard extraction")
+            return self._fallback_frame_extraction(video_path)
+    
+    def _fallback_frame_extraction(self, video_path: str) -> List[str]:
+        """標準フレーム抽出へのフォールバック"""
+        if self.temp_dir:
+            extractor = VideoFrameExtractor(str(self.temp_dir))
+            return extractor.extract_frames(video_path)
+        else:
+            # temp_dirが指定されていない場合のデフォルト
+            import tempfile
+            with tempfile.TemporaryDirectory() as temp_dir:
+                extractor = VideoFrameExtractor(temp_dir)
+                return extractor.extract_frames(video_path)
+    
+    def get_gpu_acceleration_info(self) -> Dict[str, any]:
+        """GPU加速情報を取得"""
+        if self.fast_extractor and hasattr(self.fast_extractor, 'gpu_extractor'):
+            gpu_extractor = self.fast_extractor.gpu_extractor
+            if gpu_extractor:
+                return gpu_extractor.get_gpu_info()
+        
+        return {
+            'available': False,
+            'method': None,
+            'estimated_speedup': 'N/A'
         }
 
 

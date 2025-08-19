@@ -237,7 +237,7 @@ class FastFrameExtractor:
                     '-ss', f'{start_time:.3f}',  # 開始時間（高精度）
                     '-i', str(video_path),
                     '-t', f'{end_time - start_time:.3f}',  # 処理時間
-                    # フレームレート維持（自動検出）
+                    '-vf', 'fps=source_tb',  # フレームレート維持
                     '-threads', thread_count,  # 動的スレッド数制限
                     '-preset', 'fast',  # CPU負荷軽減
                     '-y',  # 上書き許可
@@ -348,7 +348,7 @@ class FastFrameExtractor:
         cmd = [
             ffmpeg_path,
             '-i', str(video_path),
-            # フレームレート自動検出
+            '-vf', 'fps=source_tb',
             '-threads', str(min(4, multiprocessing.cpu_count())),  # 最大スレッド活用
             '-preset', 'ultrafast',  # 最高速設定
             '-y',
