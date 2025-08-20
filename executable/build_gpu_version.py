@@ -52,6 +52,7 @@ def main():
         "--hidden-import", "core.gpu_detector",
         "--hidden-import", "core.video_processor",
         "--hidden-import", "core.ai_processor",
+        "--hidden-import", "core.real_cugan_backend",
         "--hidden-import", "core.app",
         "--hidden-import", "core.gui",
         "--hidden-import", "core.resume_dialog",

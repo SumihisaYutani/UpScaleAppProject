@@ -53,10 +53,30 @@ class AIProcessor:
             logger.info(f"Initializing backend for: {self.best_backend}")
             logger.info(f"WAIFU2X_NCNN_PY_AVAILABLE: {WAIFU2X_NCNN_PY_AVAILABLE}")
             
-            # Always try Waifu2x first for any GPU backend
+            # Always try Real-CUGAN first for any GPU backend (optimized for anime/illustration)
             if self.best_backend in ['nvidia', 'nvidia_cuda', 'amd', 'amd_rocm', 'vulkan', 'intel']:
-                logger.info("Attempting to initialize Waifu2x backend")
-                # Try Python library first, then fallback to executable
+                logger.info("Attempting to initialize Real-CUGAN backend (prioritized for better anime/illustration quality)")
+                try:
+                    from .real_cugan_backend import RealCUGANBackend
+                    self.backend = RealCUGANBackend(self.resource_manager, self.gpu_info)
+                    logger.info(f"RealCUGANBackend created, checking availability...")
+                    
+                    if self.backend and self.backend.is_available():
+                        logger.info(f"Real-CUGAN backend initialized successfully: {type(self.backend).__name__}")
+                        # Initialize parallel processor for all backends (GPU優先だが、CPUでも並列処理を有効化)
+                        if self.use_parallel_processing:
+                            self.parallel_processor = OptimizedParallelProcessor(self)
+                            logger.info("Parallel processing enabled for Real-CUGAN optimized processing")
+                        return
+                    else:
+                        logger.warning(f"Real-CUGAN backend not available, falling back to Waifu2x")
+                        
+                except Exception as e:
+                    logger.error(f"Failed to create Real-CUGAN backend: {e}")
+                    logger.info("Falling back to Waifu2x backend")
+                
+                # Fallback to Waifu2x if Real-CUGAN fails
+                logger.info("Attempting to initialize Waifu2x backend as fallback")
                 if WAIFU2X_NCNN_PY_AVAILABLE:
                     logger.info("Using waifu2x_ncnn_py library backend")
                     try:
