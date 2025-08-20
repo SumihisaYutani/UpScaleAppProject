@@ -791,6 +791,7 @@ class MainGUI:
         self.output_path_var = tk.StringVar()
         self.scale_var = tk.StringVar(value="2.0")
         self.quality_var = tk.StringVar(value="Balanced")
+        self.ai_backend_var = tk.StringVar(value="real_cugan")  # Default to Real-CUGAN
         
     def _create_window(self):
         """Create main window"""
@@ -1110,6 +1111,41 @@ class MainGUI:
                 width=120
             )
             quality_menu.grid(row=0, column=3, padx=10, pady=10, sticky="w")
+            
+            # AI Backend selection (new row)
+            ctk.CTkLabel(settings_grid, text="AI Backend:").grid(row=1, column=0, padx=10, pady=10, sticky="w")
+            
+            # Get available backends for combobox
+            available_backends = self.ai_processor.get_available_backends()
+            backend_options = []
+            backend_descriptions = {}
+            
+            for backend_id, backend_info in available_backends.items():
+                display_name = f"{backend_info['name']}"
+                if backend_info.get('gpu_support'):
+                    display_name += " (GPU)"
+                else:
+                    display_name += " (CPU)"
+                backend_options.append(display_name)
+                backend_descriptions[display_name] = backend_id
+            
+            self.backend_descriptions = backend_descriptions
+            
+            self.ai_backend_menu = ctk.CTkComboBox(
+                settings_grid,
+                values=backend_options,
+                variable=self.ai_backend_var,
+                state="readonly",
+                width=200,
+                command=self._on_backend_change
+            )
+            self.ai_backend_menu.grid(row=1, column=1, columnspan=2, padx=10, pady=10, sticky="w")
+            
+            # Set default backend display
+            for display_name, backend_id in self.backend_descriptions.items():
+                if backend_id == 'real_cugan':
+                    self.ai_backend_var.set(display_name)
+                    break
         else:
             # Standard tkinter fallback
             settings_frame = ttk.LabelFrame(parent, text="Processing Settings", padding=15)
@@ -1136,6 +1172,66 @@ class MainGUI:
                 width=12
             )
             quality_combo.grid(row=0, column=3, padx=5, sticky="w")
+            
+            # AI Backend selection
+            ttk.Label(settings_frame, text="AI Backend:").grid(row=1, column=0, sticky="w", padx=5, pady=5)
+            
+            # Get available backends for combobox
+            available_backends = self.ai_processor.get_available_backends()
+            backend_options = []
+            backend_descriptions = {}
+            
+            for backend_id, backend_info in available_backends.items():
+                display_name = f"{backend_info['name']}"
+                if backend_info.get('gpu_support'):
+                    display_name += " (GPU)"
+                else:
+                    display_name += " (CPU)"
+                backend_options.append(display_name)
+                backend_descriptions[display_name] = backend_id
+            
+            self.backend_descriptions = backend_descriptions
+            
+            self.ai_backend_combo = ttk.Combobox(
+                settings_frame,
+                textvariable=self.ai_backend_var,
+                values=backend_options,
+                state="readonly",
+                width=25
+            )
+            self.ai_backend_combo.grid(row=1, column=1, columnspan=3, padx=5, pady=5, sticky="w")
+            self.ai_backend_combo.bind('<<ComboboxSelected>>', self._on_backend_change)
+            
+            # Set default backend display
+            for display_name, backend_id in self.backend_descriptions.items():
+                if backend_id == 'real_cugan':
+                    self.ai_backend_var.set(display_name)
+                    break
+    
+    def _on_backend_change(self, *args):
+        """Handle AI backend selection change"""
+        try:
+            selected_display = self.ai_backend_var.get()
+            if selected_display in self.backend_descriptions:
+                backend_id = self.backend_descriptions[selected_display]
+                logger.info(f"User selected AI backend: {backend_id} ({selected_display})")
+                
+                # Change the backend in AI processor
+                success = self.ai_processor.set_backend(backend_id)
+                if success:
+                    logger.info(f"Successfully switched to backend: {backend_id}")
+                    # Update any UI status if needed
+                    if hasattr(self, 'status_label'):
+                        self.status_label.configure(text=f"AI Backend: {selected_display}")
+                else:
+                    logger.error(f"Failed to switch to backend: {backend_id}")
+                    # Revert selection
+                    for display_name, orig_backend_id in self.backend_descriptions.items():
+                        if orig_backend_id == self.ai_processor.selected_backend:
+                            self.ai_backend_var.set(display_name)
+                            break
+        except Exception as e:
+            logger.error(f"Error changing AI backend: {e}")
         
     def _setup_system_section(self, parent):
         """Setup system information section"""

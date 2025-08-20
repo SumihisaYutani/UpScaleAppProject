@@ -92,9 +92,11 @@ class UpScaleApp:
                 gpu_info
             )
             
+            # Initialize AI processor with Real-CUGAN as default preference
             self.ai_processor = AIProcessor(
                 self.resource_manager,
-                gpu_info
+                gpu_info,
+                preferred_backend='real_cugan'  # Default to Real-CUGAN for better anime/illustration quality
             )
             
             # Initialize session manager

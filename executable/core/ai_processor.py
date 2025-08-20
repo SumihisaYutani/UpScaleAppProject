@@ -32,86 +32,154 @@ except ImportError:
 class AIProcessor:
     """Handles AI-based image upscaling using available backends"""
     
-    def __init__(self, resource_manager, gpu_info: Dict):
+    def __init__(self, resource_manager, gpu_info: Dict, preferred_backend: str = None):
         self.resource_manager = resource_manager
         self.gpu_info = gpu_info
-        self.best_backend = gpu_info.get('best_backend', 'cpu')
         
         # Initialize parallel processor settings first
         self.parallel_processor = None
         self.use_parallel_processing = True  # Enable by default for GPU backends
         
+        # Available backends
+        self.available_backends = self._detect_available_backends()
+        
+        # Set backend based on preference or auto-detect
+        if preferred_backend and preferred_backend in self.available_backends:
+            self.selected_backend = preferred_backend
+        else:
+            self.selected_backend = gpu_info.get('best_backend', 'simple')
+        
         # Initialize backend
         self.backend = None
         self._initialize_backend()
         
-        logger.info(f"AIProcessor initialized - Backend: {self.best_backend}")
+        logger.info(f"AIProcessor initialized - Selected Backend: {self.selected_backend}")
+        logger.info(f"Available Backends: {list(self.available_backends.keys())}")
+    
+    def _detect_available_backends(self) -> Dict[str, Dict[str, Any]]:
+        """Detect all available AI backends"""
+        backends = {}
+        
+        # Check Real-CUGAN availability
+        try:
+            from .real_cugan_backend import RealCUGANBackend
+            real_cugan = RealCUGANBackend(self.resource_manager, self.gpu_info)
+            if real_cugan.is_available():
+                backends['real_cugan'] = {
+                    'name': 'Real-CUGAN',
+                    'description': 'High-quality anime/illustration upscaling',
+                    'gpu_support': True,
+                    'recommended_for': 'Anime/Illustration'
+                }
+        except Exception as e:
+            logger.warning(f"Real-CUGAN backend not available: {e}")
+        
+        # Check Waifu2x Python library availability
+        if WAIFU2X_NCNN_PY_AVAILABLE:
+            try:
+                test_backend = Waifu2xPythonBackend(self.gpu_info)
+                if test_backend.is_available():
+                    backends['waifu2x_python'] = {
+                        'name': 'Waifu2x (Python)',
+                        'description': 'Fast waifu2x with Python library',
+                        'gpu_support': True,
+                        'recommended_for': 'General/Fast processing'
+                    }
+            except Exception as e:
+                logger.warning(f"Waifu2x Python backend not available: {e}")
+        
+        # Check Waifu2x executable availability
+        try:
+            test_backend = Waifu2xExecutableBackend(self.resource_manager, self.gpu_info)
+            if test_backend.is_available():
+                backends['waifu2x_executable'] = {
+                    'name': 'Waifu2x (Executable)',
+                    'description': 'Standard waifu2x executable',
+                    'gpu_support': True,
+                    'recommended_for': 'Compatibility'
+                }
+        except Exception as e:
+            logger.warning(f"Waifu2x executable backend not available: {e}")
+        
+        # Simple upscaling is always available
+        backends['simple'] = {
+            'name': 'Simple Upscaling',
+            'description': 'Basic bicubic upscaling (CPU only)',
+            'gpu_support': False,
+            'recommended_for': 'Fallback/Testing'
+        }
+        
+        logger.info(f"Detected {len(backends)} available backends: {list(backends.keys())}")
+        return backends
+    
+    def get_available_backends(self) -> Dict[str, Dict[str, Any]]:
+        """Get list of available backends for GUI selection"""
+        return self.available_backends.copy()
+    
+    def set_backend(self, backend_name: str) -> bool:
+        """Change the active backend"""
+        if backend_name not in self.available_backends:
+            logger.error(f"Backend '{backend_name}' not available")
+            return False
+        
+        logger.info(f"Switching backend from '{self.selected_backend}' to '{backend_name}'")
+        self.selected_backend = backend_name
+        
+        # Cleanup current backend
+        if self.backend:
+            try:
+                self.backend.cleanup()
+            except:
+                pass
+        
+        # Initialize new backend
+        self._initialize_backend()
+        return self.backend is not None
     
     def _initialize_backend(self):
-        """Initialize the best available AI backend"""
+        """Initialize the selected AI backend without fallback"""
         try:
-            logger.info(f"Initializing backend for: {self.best_backend}")
-            logger.info(f"WAIFU2X_NCNN_PY_AVAILABLE: {WAIFU2X_NCNN_PY_AVAILABLE}")
+            logger.info(f"Initializing selected backend: {self.selected_backend}")
             
-            # Always try Real-CUGAN first for any GPU backend (optimized for anime/illustration)
-            if self.best_backend in ['nvidia', 'nvidia_cuda', 'amd', 'amd_rocm', 'vulkan', 'intel']:
-                logger.info("Attempting to initialize Real-CUGAN backend (prioritized for better anime/illustration quality)")
-                try:
-                    from .real_cugan_backend import RealCUGANBackend
-                    self.backend = RealCUGANBackend(self.resource_manager, self.gpu_info)
-                    logger.info(f"RealCUGANBackend created, checking availability...")
-                    
-                    if self.backend and self.backend.is_available():
-                        logger.info(f"Real-CUGAN backend initialized successfully: {type(self.backend).__name__}")
-                        # Initialize parallel processor for all backends (GPU優先だが、CPUでも並列処理を有効化)
-                        if self.use_parallel_processing:
-                            self.parallel_processor = OptimizedParallelProcessor(self)
-                            logger.info("Parallel processing enabled for Real-CUGAN optimized processing")
-                        return
-                    else:
-                        logger.warning(f"Real-CUGAN backend not available, falling back to Waifu2x")
-                        
-                except Exception as e:
-                    logger.error(f"Failed to create Real-CUGAN backend: {e}")
-                    logger.info("Falling back to Waifu2x backend")
+            if self.selected_backend == 'real_cugan':
+                logger.info("Initializing Real-CUGAN backend")
+                from .real_cugan_backend import RealCUGANBackend
+                self.backend = RealCUGANBackend(self.resource_manager, self.gpu_info)
                 
-                # Fallback to Waifu2x if Real-CUGAN fails
-                logger.info("Attempting to initialize Waifu2x backend as fallback")
-                if WAIFU2X_NCNN_PY_AVAILABLE:
-                    logger.info("Using waifu2x_ncnn_py library backend")
-                    try:
-                        self.backend = Waifu2xPythonBackend(self.gpu_info)
-                        logger.info(f"Waifu2xPythonBackend created, checking availability...")
-                    except Exception as e:
-                        logger.error(f"Failed to create Waifu2xPythonBackend: {e}")
-                        self.backend = None
-                else:
-                    logger.info("waifu2x_ncnn_py not available, using waifu2x executable backend")
-                    self.backend = Waifu2xExecutableBackend(self.resource_manager, self.gpu_info)
+            elif self.selected_backend == 'waifu2x_python':
+                logger.info("Initializing Waifu2x Python backend")
+                self.backend = Waifu2xPythonBackend(self.gpu_info)
                 
-                if self.backend and self.backend.is_available():
-                    logger.info(f"Waifu2x backend initialized successfully: {type(self.backend).__name__}")
-                    # Initialize parallel processor for all backends (GPU優先だが、CPUでも並列処理を有効化)
-                    if self.use_parallel_processing:
-                        self.parallel_processor = OptimizedParallelProcessor(self)
-                        logger.info("Parallel processing enabled for optimized processing")
-                    return
-                else:
-                    logger.warning(f"Waifu2x backend not available (backend={self.backend}, available={self.backend.is_available() if self.backend else 'None'}), falling back to simple upscaling")
+            elif self.selected_backend == 'waifu2x_executable':
+                logger.info("Initializing Waifu2x Executable backend")
+                self.backend = Waifu2xExecutableBackend(self.resource_manager, self.gpu_info)
+                
+            elif self.selected_backend == 'simple':
+                logger.info("Initializing Simple Upscaling backend")
+                self.backend = SimpleUpscalingBackend()
+                
+            else:
+                logger.error(f"Unknown backend: {self.selected_backend}")
+                raise RuntimeError(f"Unknown backend: {self.selected_backend}")
             
-            # Fallback to simple upscaling
-            logger.info("Using simple upscaling backend")
-            self.backend = SimpleUpscalingBackend()
-            # CPUモードでも並列処理を初期化（効率向上のため）
+            # Verify backend is available
+            if not self.backend or not self.backend.is_available():
+                raise RuntimeError(f"Backend '{self.selected_backend}' is not available")
+            
+            logger.info(f"Backend '{self.selected_backend}' initialized successfully: {type(self.backend).__name__}")
+            
+            # Initialize parallel processor for all backends
             if self.use_parallel_processing:
                 self.parallel_processor = OptimizedParallelProcessor(self)
-                logger.info("Parallel processing enabled for CPU mode")
+                logger.info(f"Parallel processing enabled for {self.selected_backend} backend")
+            
+            return
                 
         except Exception as e:
-            logger.error(f"Failed to initialize AI backend: {e}")
+            logger.error(f"Failed to initialize AI backend '{self.selected_backend}': {e}")
             import traceback
             traceback.print_exc()
-            self.backend = SimpleUpscalingBackend()
+            raise RuntimeError(f"Backend '{self.selected_backend}' initialization failed: {e}")
     
     def upscale_frames(self, frame_paths: List[str], output_dir: str, 
                       scale_factor: float = 2.0,
