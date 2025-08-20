@@ -56,7 +56,7 @@ class GPUFrameExtractor:
         try:
             cmd = [ffmpeg_path, '-hwaccels']
             logger.info(f"Running GPU detection command: {' '.join(cmd)}")
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=10,
+            result = subprocess.run(cmd, capture_output=True, text=True,
                                   creationflags=subprocess.CREATE_NO_WINDOW)
             
             if result.returncode != 0:
@@ -187,7 +187,7 @@ class GPUFrameExtractor:
             # 進捗監視
             self._monitor_gpu_extraction_progress(process, output_dir, progress_callback, progress_dialog)
             
-            stdout, stderr = process.communicate(timeout=1800)  # 30分タイムアウト
+            stdout, stderr = process.communicate()
             
             if process.returncode != 0:
                 logger.error(f"GPU extraction failed: {stderr}")
@@ -294,7 +294,7 @@ class GPUFrameExtractor:
         ])
         
         try:
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=600,
+            result = subprocess.run(cmd, capture_output=True, text=True,
                                   creationflags=subprocess.CREATE_NO_WINDOW)
             
             if result.returncode != 0:
@@ -431,7 +431,7 @@ class GPUFrameExtractor:
             
             logger.info("Running GPU extraction test...")
             
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=30,
+            result = subprocess.run(cmd, capture_output=True, text=True,
                                   creationflags=subprocess.CREATE_NO_WINDOW)
             
             success = result.returncode == 0
@@ -496,7 +496,7 @@ class GPUFrameExtractor:
             # より頻繁な進捗監視
             self._monitor_gpu_extraction_progress_safe(process, output_dir, progress_callback, progress_dialog)
             
-            stdout, stderr = process.communicate(timeout=1200)  # 20分タイムアウト
+            stdout, stderr = process.communicate()
             
             if process.returncode != 0:
                 logger.error(f"Safe GPU extraction failed: {stderr}")
@@ -607,7 +607,7 @@ class GPUFrameExtractor:
         logger.debug(f"GPU batch {batch_num + 1} command: {' '.join(cmd[:8])}...")
         
         try:
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=180,
+            result = subprocess.run(cmd, capture_output=True, text=True,
                                   creationflags=subprocess.CREATE_NO_WINDOW)
             
             if result.returncode != 0:
@@ -629,7 +629,7 @@ class GPUFrameExtractor:
                 ]
                 
                 logger.info(f"Retrying GPU batch {batch_num + 1} without hardware acceleration")
-                result = subprocess.run(fallback_cmd, capture_output=True, text=True, timeout=180,
+                result = subprocess.run(fallback_cmd, capture_output=True, text=True,
                                       creationflags=subprocess.CREATE_NO_WINDOW)
                 
                 if result.returncode != 0:

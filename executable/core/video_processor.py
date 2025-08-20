@@ -78,7 +78,7 @@ class VideoProcessor:
                 startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
                 startupinfo.wShowWindow = subprocess.SW_HIDE
             
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=30, startupinfo=startupinfo)
+            result = subprocess.run(cmd, capture_output=True, text=True, startupinfo=startupinfo)
             
             if result.returncode != 0:
                 return {
@@ -259,7 +259,7 @@ class VideoProcessor:
                 startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
                 startupinfo.wShowWindow = subprocess.SW_HIDE
             
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=60, startupinfo=startupinfo)
+            result = subprocess.run(cmd, capture_output=True, text=True, startupinfo=startupinfo)
             
             if result.returncode == 0 and result.stdout.strip():
                 frame_count = int(result.stdout.strip())
@@ -448,12 +448,12 @@ class VideoProcessor:
         monitor_thread = threading.Thread(target=monitor_progress, daemon=True)
         monitor_thread.start()
         
-        # Wait for process completion with extended timeout
+        # Wait for process completion without timeout
         try:
-            stdout, stderr = process.communicate(timeout=3600)  # 60 minutes
-        except subprocess.TimeoutExpired:
+            stdout, stderr = process.communicate()
+        except Exception as e:
             process.kill()
-            raise RuntimeError("Frame extraction timed out after 60 minutes")
+            raise RuntimeError(f"Frame extraction failed: {e}")
         
         # Check if cancelled during processing
         if progress_dialog and progress_dialog.cancelled:
@@ -612,7 +612,7 @@ class VideoProcessor:
                 logger.info(f"DEBUG: Expected output pattern: {output_pattern}")
                 
                 result = subprocess.run(cmd, capture_output=True, text=True, 
-                                      timeout=900, startupinfo=startupinfo)  # 15 minutes per batch
+                                      startupinfo=startupinfo)
                 
                 logger.info(f"DEBUG: FFmpeg batch {batch_num + 1} completed with return code: {result.returncode}")
                 logger.info(f"DEBUG: FFmpeg stdout length: {len(result.stdout)} chars")
@@ -816,7 +816,7 @@ class VideoProcessor:
                     startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
                     startupinfo.wShowWindow = subprocess.SW_HIDE
                 
-                result = subprocess.run(cmd, capture_output=True, text=True, timeout=1200, startupinfo=startupinfo)
+                result = subprocess.run(cmd, capture_output=True, text=True, startupinfo=startupinfo)
                 
                 if result.returncode != 0:
                     logger.error(f"FFmpeg combine failed: {result.stderr}")

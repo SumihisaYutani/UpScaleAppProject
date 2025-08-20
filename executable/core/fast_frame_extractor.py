@@ -255,7 +255,6 @@ class FastFrameExtractor:
                     cmd, 
                     capture_output=True, 
                     text=True, 
-                    timeout=300,  # 5分タイムアウト（大幅短縮）
                     creationflags=subprocess.CREATE_NO_WINDOW
                 )
                 
@@ -363,7 +362,6 @@ class FastFrameExtractor:
             cmd, 
             capture_output=True, 
             text=True, 
-            timeout=600,  # 10分タイムアウト
             creationflags=subprocess.CREATE_NO_WINDOW
         )
         
