@@ -126,6 +126,25 @@ class ResourceManager:
                     logger.info(f"Found alternative resource binary: {alt_name} at {alt_resource_path}")
                     return str(alt_resource_path)
         
+        elif name == 'realcugan-ncnn-vulkan':
+            for alt_name in ['realcugan-ncnn-vulkan.exe', 'realcugan.exe', 'real-cugan-ncnn-vulkan.exe']:
+                if self.is_bundle:
+                    alt_path = self.bundle_dir / alt_name
+                    if alt_path.exists():
+                        logger.info(f"Found alternative bundled Real-CUGAN binary: {alt_name} at {alt_path}")
+                        return str(alt_path)
+                    
+                    # Search recursively for alternative names
+                    for search_path in self.bundle_dir.rglob(alt_name):
+                        if search_path.is_file():
+                            logger.info(f"Found alternative bundled Real-CUGAN binary recursively: {alt_name} at {search_path}")
+                            return str(search_path)
+                
+                alt_resource_path = self.binaries_dir / alt_name
+                if alt_resource_path.exists():
+                    logger.info(f"Found alternative resource Real-CUGAN binary: {alt_name} at {alt_resource_path}")
+                    return str(alt_resource_path)
+        
         logger.warning(f"Binary not found: {name} (searched: bundle={self.is_bundle}, resource_dir={self.binaries_dir})")
         return None
     

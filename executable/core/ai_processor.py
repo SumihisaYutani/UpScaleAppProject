@@ -43,11 +43,16 @@ class AIProcessor:
         # Available backends
         self.available_backends = self._detect_available_backends()
         
-        # Set backend based on preference or auto-detect
+        # Set backend based on preference or first available
         if preferred_backend and preferred_backend in self.available_backends:
             self.selected_backend = preferred_backend
         else:
-            self.selected_backend = gpu_info.get('best_backend', 'simple')
+            # Select first available backend (no automatic fallback)
+            available_backend_list = list(self.available_backends.keys())
+            if available_backend_list:
+                self.selected_backend = available_backend_list[0]
+            else:
+                raise RuntimeError("No AI backends available")
         
         # Initialize backend
         self.backend = None
