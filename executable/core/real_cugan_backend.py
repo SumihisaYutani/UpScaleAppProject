@@ -94,6 +94,7 @@ class RealCUGANBackend:
         """Get backend information"""
         gpu_available = self.gpu_info.get('vulkan', {}).get('available', False)
         return {
+            'backend': 'Real-CUGAN',  # Add backend key for GUI compatibility
             'name': 'Real-CUGAN',
             'version': 'NCNN-Vulkan',
             'description': 'Real-CUGAN for anime/illustration upscaling',
