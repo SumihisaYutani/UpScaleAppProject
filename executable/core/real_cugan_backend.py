@@ -65,7 +65,9 @@ class RealCUGANBackend:
                                   capture_output=True, text=True, timeout=10,
                                   creationflags=subprocess.CREATE_NO_WINDOW)
             
-            if result.returncode == 0 or 'Real-CUGAN' in result.stdout:
+            
+            # Real-CUGAN outputs help to stdout and may return non-zero exit code
+            if 'realcugan-ncnn-vulkan' in result.stdout or 'Usage:' in result.stdout:
                 logger.info("Real-CUGAN executable found and functional")
                 self.available = True
                 
@@ -90,11 +92,13 @@ class RealCUGANBackend:
     
     def get_info(self) -> Dict[str, Any]:
         """Get backend information"""
+        gpu_available = self.gpu_info.get('vulkan', {}).get('available', False)
         return {
             'name': 'Real-CUGAN',
             'version': 'NCNN-Vulkan',
             'description': 'Real-CUGAN for anime/illustration upscaling',
-            'gpu_acceleration': self.gpu_info.get('vulkan', {}).get('available', False),
+            'gpu_acceleration': gpu_available,
+            'gpu_mode': gpu_available,  # Add gpu_mode for compatibility
             'models': list(self.models.keys()),
             'current_model': self.current_model,
             'available': self.available
@@ -110,7 +114,7 @@ class RealCUGANBackend:
             logger.warning(f"Unknown Real-CUGAN model: {model_name}")
             return False
     
-    def upscale_image(self, input_path: str, output_path: str, scale_factor: float = 2.0) -> bool:
+    def upscale_image(self, input_path: str, output_path: str, scale_factor: float = 2.0, progress_dialog=None) -> bool:
         """Upscale a single image using Real-CUGAN"""
         try:
             realcugan_path = self.resource_manager.get_binary_path('realcugan-ncnn-vulkan')
@@ -122,13 +126,23 @@ class RealCUGANBackend:
             output_dir = Path(output_path).parent
             output_dir.mkdir(parents=True, exist_ok=True)
             
+            # Get model name (Real-CUGAN expects relative path from executable directory)
+            model_name = self.models[self.current_model]['file']
+            executable_dir = Path(realcugan_path).parent
+            model_path = executable_dir / model_name
+            
+            # Check if model directory exists
+            if not model_path.exists():
+                logger.error(f"Real-CUGAN model directory not found: {model_path}")
+                return False
+            
             # Build Real-CUGAN command
             cmd = [
                 realcugan_path,
                 '-i', str(input_path),
                 '-o', str(output_path),
                 '-s', str(int(scale_factor)),  # Scale factor (1, 2, 3, 4)
-                '-n', self.models[self.current_model]['file'],  # Model to use
+                '-m', model_name,  # Model path (relative to working directory)
             ]
             
             # Add GPU acceleration if available
@@ -145,26 +159,35 @@ class RealCUGANBackend:
                 '-x',  # Use TTA mode for better quality
             ])
             
-            logger.debug(f"Real-CUGAN command: {' '.join(cmd)}")
+            logger.info(f"Real-CUGAN command: {' '.join(cmd)}")
             
-            # Execute Real-CUGAN
+            # Execute Real-CUGAN with correct working directory
+            executable_dir = Path(realcugan_path).parent
             result = subprocess.run(
                 cmd, 
                 capture_output=True, 
                 text=True,
+                cwd=str(executable_dir),  # Set working directory
                 creationflags=subprocess.CREATE_NO_WINDOW
             )
+            
+            logger.info(f"Real-CUGAN execution completed - returncode: {result.returncode}")
+            if result.stdout:
+                logger.info(f"Real-CUGAN stdout: {result.stdout}")
+            if result.stderr:
+                logger.info(f"Real-CUGAN stderr: {result.stderr}")
             
             if result.returncode == 0:
                 # Verify output file was created
                 if Path(output_path).exists():
-                    logger.debug(f"Real-CUGAN upscaling successful: {input_path} -> {output_path}")
+                    logger.info(f"Real-CUGAN upscaling successful: {input_path} -> {output_path}")
                     return True
                 else:
                     logger.error(f"Real-CUGAN output file not created: {output_path}")
                     return False
             else:
-                logger.error(f"Real-CUGAN failed: {result.stderr}")
+                logger.error(f"Real-CUGAN failed with return code {result.returncode}")
+                logger.error(f"Real-CUGAN stderr: {result.stderr}")
                 return False
                 
         except Exception as e:

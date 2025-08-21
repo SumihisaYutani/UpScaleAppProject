@@ -35,6 +35,7 @@ class ResourceManager:
             'ffmpeg': 'ffmpeg.exe',
             'ffprobe': 'ffprobe.exe', 
             'waifu2x': 'waifu2x-ncnn-vulkan.exe',
+            'realcugan-ncnn-vulkan': 'realcugan-ncnn-vulkan.exe',
             'vulkaninfo': 'vulkaninfo.exe'
         }
         

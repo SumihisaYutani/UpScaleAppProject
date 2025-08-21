@@ -43,6 +43,9 @@ class AIProcessor:
         # Available backends
         self.available_backends = self._detect_available_backends()
         
+        # Set best backend (for compatibility)
+        self.best_backend = self.gpu_info.get('best_backend', 'cpu')
+        
         # Set backend based on preference or first available
         if preferred_backend and preferred_backend in self.available_backends:
             self.selected_backend = preferred_backend
