@@ -102,6 +102,7 @@ class RealCUGANBackend:
         gpu_available = vulkan_available or amd_gpu_available or nvidia_gpu_available
         
         return {
+            'backend': 'Real-CUGAN',  # Add backend key for GUI compatibility
             'name': 'Real-CUGAN',
             'version': 'NCNN-Vulkan',
             'description': 'Real-CUGAN for anime/illustration upscaling',
