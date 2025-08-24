@@ -1,19 +1,18 @@
 # UpScaleAppProject
 
-**AI Video Upscaling Tool** - 低解像度のMP4動画をAI技術（Waifu2x・Stable Diffusion）を使用して高解像度・高画質に変換するツール
+**AI Video Upscaling Tool** - 低解像度のMP4動画をAI技術（Real-CUGAN・Waifu2x・Stable Diffusion）を使用して高解像度・高画質に変換するツール
 
 ## 🌟 特徴
 
-- **複数のAI手法対応**: Waifu2x（高速・高品質）、Stable Diffusion（カスタマイズ可能）
-- **AMD GPU完全対応**: Radeon GPU向けwaifu2x最適化（ROCm/Vulkanバックエンド）
-- **Waifu2x統合**: 専用AI手法による超高画質アップスケーリング
-- **対応フォーマット**: MP4ファイル（H.264, H.265/HEVC, AVC対応）
-- **多段階スケーリング**: 1x, 2x, 4x, 8x, 16x, 32x まで対応（Waifu2x）
-- **ノイズ除去**: 4段階のノイズリダクション機能
-- **バッチ処理**: フレーム単位での効率的な処理
-- **GUI & CLI**: グラフィカルユーザーインターフェース＋コマンドライン版
-- **GPU加速**: NVIDIA CUDA・AMD Vulkan・Intel対応でより高速な処理
-- **自動GPU検出**: AMD/NVIDIA GPUの自動検出と最適バックエンド選択
+- **🎯 Real-CUGAN特化AI**: anime/illustration専用超解像（NCNN-Vulkan最適化）
+- **⚡ 複数のAI手法対応**: Real-CUGAN・Waifu2x（高速・高品質）・Stable Diffusion（カスタマイズ可能）
+- **🔥 AMD GPU完全対応**: Radeon RX Vega 56 Vulkan GPU加速確認済み
+- **🌟 最新GPU統合**: NVIDIA CUDA・AMD Vulkan・Intel統合GPU対応
+- **📐 実用的スケーリング**: 2x・4x・8x（実用重視の倍率選択）
+- **🎨 高品質処理**: Real-CUGAN denoise2x（anime最適バランス）・Waifu2x cunet
+- **🔧 自動GPU検出**: AMD/NVIDIA/Intel GPUの自動検出と最適バックエンド選択
+- **📹 対応フォーマット**: MP4ファイル（H.264, H.265/HEVC, AVC対応）
+- **⚙️ ハイブリッド最適化**: CPU抽出 + GPU AI処理（最適パフォーマンス）
 - **軽量版対応**: AI依存関係なしでの基本機能利用
 - **ステップ別進捗表示**: 動画検証→フレーム抽出→AI処理→動画結合の詳細進捗
 - **リアルタイムフレームカウント**: 処理中のフレーム数をリアルタイム表示
@@ -147,12 +146,13 @@ python test_environment.py
 ### 🔥 **実行可能ファイル版（最推奨）**
 
 **特徴:**
-- Python環境不要（352MB単一実行ファイル）
-- 全ての依存関係を内蔵（FFmpeg, Waifu2x-ncnn-py, PyTorch等）
-- AMD Radeon RX Vega 56 + Intel CPU構成に最適化
-- GPU加速AI処理による3-5倍高速化
+- Python環境不要（481MB単一実行ファイル - Real-CUGAN統合版）
+- 全ての依存関係を内蔵（FFmpeg, Real-CUGAN, Waifu2x-ncnn-py, PyTorch等）
+- AMD Radeon RX Vega 56 Vulkan GPU加速確認済み
+- Real-CUGAN NCNN-Vulkan GPU加速による高速AI処理
+- 自動GPU検出・最適バックエンド選択（NVIDIA CUDA > AMD Vulkan > CPU）
 - マルチGPU対応（NVIDIA/AMD/Intel/Vulkan）
-- ワンクリックで起動
+- ワンクリックで起動・日本語完全対応
 
 **使用手順:**
 1. `executable/dist/UpScaleApp_GPU.exe` を実行
@@ -160,9 +160,10 @@ python test_environment.py
    - **📹 動画情報**が自動表示（解像度、フレーム数、時間など）
    - **🔄 途中再開検出**: 前回の未完了セッションが自動検出される場合があります
 3. 出力フォルダを選択（オプション）
-4. スケールファクターを設定（1.5x〜4.0x）
-5. 品質設定を選択（Fast/Balanced/Quality）
-6. 「Start Processing」をクリック
+4. **スケールファクター選択**: 2.0x/4.0x/8.0x（実用的倍率）
+5. **AIプロセッサー選択**: Real-CUGAN（anime特化）/Waifu2x（汎用）
+6. **品質設定選択**: denoise2x（バランス最適）/conservative/denoise1x/denoise3x
+7. 「Start Processing」をクリック - Real-CUGAN GPU加速で高速処理開始
 
 **途中再開機能:**
 - 処理が中断された場合、同じ動画・設定で再度選択すると再開ダイアログが表示
@@ -171,14 +172,16 @@ python test_environment.py
 - **❌ キャンセル**: 処理を中止
 - フレーム単位の正確な再開により、AIアップスケーリングを効率的に継続
 
-**システム情報表示:**
-- GPU Backend: waifu2x_ncnn_py（AI超解像処理エンジン）
-- AI Processor: AMD Radeon RX Vega最適化
-- GPU Mode: Yes（ハードウェア加速有効）
-- Total GPUs: 検出されたGPU数
-- Primary GPU: AMD Radeon RX Vega 56（メインGPU）
-- Secondary GPU: Intel UHD Graphics（内蔵GPU）
-- GPU Status: リアルタイム使用率監視
+**🖥️ リアルタイムシステム情報表示:**
+- **AI Backend**: Real-CUGAN NCNN-Vulkan（anime特化AI超解像エンジン）
+- **AI Processor**: AMD Radeon RX Vega 56（Vulkan GPU加速確認済み）
+- **GPU Acceleration**: Yes - Vulkan GPU加速有効
+- **Detection Status**: AMD GPU検出・Vulkan対応確認
+- **Processing Mode**: Hybrid最適化（CPU抽出 + GPU AI処理）
+- **Total GPUs**: 2 (AMD Discrete + Intel Integrated)
+- **Primary GPU**: AMD Radeon RX Vega 56（メイン処理）
+- **Secondary GPU**: Intel UHD Graphics（補助処理）
+- **🔄 Dynamic Updates**: AIプロセッサー選択時リアルタイム更新
 
 ### 📱 開発版GUI（推奨）
 
@@ -305,10 +308,11 @@ UpScaleAppProject/
 - **品質プリセット**: Fast, Balanced, Quality
 
 ### AI処理設定
-- **優先手法**: Auto（自動選択）、Waifu2x AMD GPU、Waifu2x、Stable Diffusion、Simple
-- **Waifu2x設定**: スケール、ノイズレベル、モデル種類
-- **AMD GPU設定**: バックエンドタイプ（auto/rocm/vulkan）、メモリ最適化
-- **Stable Diffusion設定**: モデル選択、バッチサイズ等
+- **🎯 優先手法**: Real-CUGAN（anime特化）、Waifu2x（汎用）、Stable Diffusion（実験版）
+- **Real-CUGAN設定**: conservative/denoise1x/denoise2x/denoise3x、NCNN-Vulkan GPU加速
+- **Waifu2x設定**: スケール、ノイズレベル、モデル種類（cunet/anime_style_art_rgb等）
+- **GPU加速設定**: 自動最適バックエンド選択（NVIDIA CUDA > AMD Vulkan > CPU）
+- **Vulkan最適化**: AMD/NVIDIA GPU向けVulkan API GPU加速
 
 ## 🔧 トラブルシューティング
 
@@ -332,15 +336,20 @@ brew install ffmpeg
 python -c "import torch; print(torch.cuda.is_available())"
 ```
 
-**3. Waifu2x関連エラー**
+**3. Real-CUGAN・Waifu2x関連エラー**
 ```bash
+# Real-CUGAN GPU加速確認
+python -c "from executable.core.real_cugan_backend import RealCUGANBackend; print('Real-CUGAN available')"
+
 # Waifu2xの動作確認
 python test_waifu2x.py
 
 # AMD GPU環境の確認とセットアップ
 python setup_amd_gpu.py
 
-# Vulkan サポート確認
+# Vulkan サポート確認・GPU検出テスト
+python -c "from executable.core.gpu_detector import GPUDetector; detector = GPUDetector(None); print(detector.get_gpu_summary())"
+
 # Windows: DirectX診断ツールでVulkan対応を確認
 # Linux: vulkan-utils をインストール後 vulkaninfo 実行
 ```
@@ -456,16 +465,16 @@ python test_environment.py
 
 ## 📋 更新履歴
 
-### v2.2.0 (2025-08-19) - GPU加速AI完全版完成 🎯
-- ✨ **GPU支援フレーム抽出** - AMD/Intel/NVIDIA GPU ハードウェア加速対応
-- 🤖 **AI超解像処理完全統合** - Waifu2x-ncnn-py完全実装とAMD Radeon RX Vega最適化
-- ⚡ **3-5倍高速化** - GPU加速による処理速度劇的改善とCPU負荷50-70%削減  
-- 🔧 **最適化された並列処理** - 3ワーカー並列実行とGPU同期処理
-- 📊 **リアルタイム監視** - GPU使用率監視と動的負荷調整
-- 🎯 **自動GPU検出** - D3D11VA/QSV加速と最適ハードウェア選択
-- 🔄 **完全な機能統合** - レジューム機能とAI処理の包括的統合
-- 📦 **単一実行ファイル** - 352MB完全版配布ファイル（Python環境不要）
-- 📝 **包括的ログシステム** - タイムスタンプ付き詳細ログとエラー追跡
+### v2.2.1 (2025-08-24) - Real-CUGAN GPU加速完全統合 🎯
+- 🎨 **Real-CUGAN統合** - anime/illustration特化AI超解像（NCNN-Vulkan）
+- ⚡ **AMD Vulkan GPU加速** - Radeon RX Vega 56 GPU加速動作確認済み
+- 🔧 **GUI最適化** - スケール選択2x/4x/8x、デフォルト設定最適化
+- 📊 **動的システム情報** - AIプロセッサー選択時リアルタイム更新
+- 🛠️ **GPU検出修正** - shutil import修正、Vulkan検出強化
+- ⚙️ **ハイブリッド最適化** - CPU抽出+GPU AI処理（安定性重視）
+- 🔍 **包括的デバッグ** - GPU状態監視・互換性問題解析
+- 📦 **完全版実行ファイル** - 481MB Real-CUGAN統合版（Python環境不要）
+- 🌏 **日本語完全対応** - 全UI・メッセージの日本語ローカライゼーション
 
 ### v2.1.0 (2025-01-16) - 途中再開機能実装 🔄
 - ✨ **途中再開機能** - 処理中断時の自動検出・途中再開対応
@@ -491,6 +500,6 @@ python test_environment.py
 ---
 
 **作成者**: SumihisaYutani  
-**バージョン**: 2.2.0  
-**最終更新**: 2025-08-19  
-**最新成果**: GPU加速AI完全版完成・352MB単一実行ファイル・配布準備完了
+**バージョン**: 2.2.1 - Real-CUGAN GPU加速完全統合版  
+**最終更新**: 2025-08-24  
+**最新成果**: Real-CUGAN Vulkan GPU加速・AMD Radeon RX Vega対応・481MB完全統合実行ファイル・配布準備完了
