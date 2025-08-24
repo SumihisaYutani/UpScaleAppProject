@@ -6,6 +6,7 @@ Consolidated GPU detection for all supported backends
 import os
 import subprocess
 import logging
+import shutil
 from typing import Dict, List, Optional, Any
 from pathlib import Path
 

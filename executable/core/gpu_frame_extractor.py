@@ -57,7 +57,8 @@ class GPUFrameExtractor:
             cmd = [ffmpeg_path, '-hwaccels']
             logger.info(f"Running GPU detection command: {' '.join(cmd)}")
             result = subprocess.run(cmd, capture_output=True, text=True,
-                                  creationflags=subprocess.CREATE_NO_WINDOW)
+                                  creationflags=subprocess.CREATE_NO_WINDOW,
+                                  shell=False, encoding='utf-8')
             
             if result.returncode != 0:
                 logger.warning(f"Failed to query FFmpeg hardware acceleration support - Return code: {result.returncode}")
@@ -164,9 +165,8 @@ class GPUFrameExtractor:
         # 入力ファイルと出力設定
         cmd.extend([
             '-i', str(video_path),
-            '-vf', 'hwdownload,format=rgb24',  # GPU→CPUデータ転送
+            '-vf', 'hwdownload',  # GPU→CPU転送のみ（形式変換はFFmpegに委ねる）
             '-threads', '1',  # GPUメイン処理時はCPUスレッド最小限に
-            '-preset', 'ultrafast',  # 最高速設定
             '-y',
             str(output_dir / 'frame_%06d.png')
         ])
@@ -286,16 +286,16 @@ class GPUFrameExtractor:
             '-ss', f'{start_time:.3f}',
             '-i', str(video_path),
             '-t', f'{duration:.3f}',
-            '-vf', 'hwdownload,format=rgb24',
+            '-vf', 'hwdownload',
             '-threads', '1',
-            '-preset', 'ultrafast',
             '-y',
             str(batch_dir / 'frame_%06d.png')
         ])
         
         try:
             result = subprocess.run(cmd, capture_output=True, text=True,
-                                  creationflags=subprocess.CREATE_NO_WINDOW)
+                                  creationflags=subprocess.CREATE_NO_WINDOW,
+                                  shell=False, encoding='utf-8')
             
             if result.returncode != 0:
                 raise RuntimeError(f"GPU batch extraction failed: {result.stderr}")
@@ -432,7 +432,8 @@ class GPUFrameExtractor:
             logger.info("Running GPU extraction test...")
             
             result = subprocess.run(cmd, capture_output=True, text=True,
-                                  creationflags=subprocess.CREATE_NO_WINDOW)
+                                  creationflags=subprocess.CREATE_NO_WINDOW,
+                                  shell=False, encoding='utf-8')
             
             success = result.returncode == 0
             test_files = list(test_dir.glob("test_*.png"))
@@ -471,11 +472,9 @@ class GPUFrameExtractor:
         cmd = [
             ffmpeg_path,
             '-hwaccel', self.selected_method['hwaccel'],
-            '-hwaccel_output_format', 'nv12',  # より互換性の高い形式
             '-i', str(video_path),
-            '-vf', 'hwdownload,format=rgb24',  # GPU→CPU転送
+            '-vf', 'hwdownload',  # GPU→CPU転送のみ（形式変換はFFmpegに委ねる）
             '-threads', '2',  # 最小限のCPUスレッド
-            '-preset', 'faster',  # より安定な設定
             '-loglevel', 'warning',  # ログレベル制限
             '-y',
             str(output_dir / 'frame_%06d.png')
@@ -597,7 +596,6 @@ class GPUFrameExtractor:
             '-t', f'{duration:.3f}',
             '-vf', 'scale=trunc(iw/2)*2:trunc(ih/2)*2',  # 偶数サイズに調整
             '-threads', '1',
-            '-preset', 'ultrafast',  # 最高速プリセット
             '-pix_fmt', 'rgb24',
             '-loglevel', 'warning',
             '-y',
@@ -608,7 +606,8 @@ class GPUFrameExtractor:
         
         try:
             result = subprocess.run(cmd, capture_output=True, text=True,
-                                  creationflags=subprocess.CREATE_NO_WINDOW)
+                                  creationflags=subprocess.CREATE_NO_WINDOW,
+                                  shell=False, encoding='utf-8')
             
             if result.returncode != 0:
                 logger.error(f"GPU batch {batch_num + 1} stderr: {result.stderr}")
@@ -622,7 +621,6 @@ class GPUFrameExtractor:
                     '-t', f'{duration:.3f}',
                     '-vf', 'scale=trunc(iw/2)*2:trunc(ih/2)*2',
                     '-threads', '1',
-                    '-preset', 'ultrafast',
                     '-loglevel', 'warning',
                     '-y',
                     str(batch_dir / 'frame_%06d.png')
@@ -630,7 +628,8 @@ class GPUFrameExtractor:
                 
                 logger.info(f"Retrying GPU batch {batch_num + 1} without hardware acceleration")
                 result = subprocess.run(fallback_cmd, capture_output=True, text=True,
-                                      creationflags=subprocess.CREATE_NO_WINDOW)
+                                      creationflags=subprocess.CREATE_NO_WINDOW,
+                                      shell=False, encoding='utf-8')
                 
                 if result.returncode != 0:
                     raise RuntimeError(f"Batch extraction failed even without GPU: {result.stderr}")

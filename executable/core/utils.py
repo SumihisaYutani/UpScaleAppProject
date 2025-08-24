@@ -43,14 +43,35 @@ class ResourceManager:
         logger.info(f"Bundle mode: {self.is_bundle}, Bundle dir: {self.bundle_dir}")
     
     def get_binary_path(self, name: str) -> Optional[str]:
-        """Get path to a binary executable"""
+        """Get path to a binary executable - prioritize system installations for ffmpeg/ffprobe"""
         if name not in self.binaries:
             logger.warning(f"Unknown binary requested: {name}")
             return None
         
         binary_filename = self.binaries[name]
         
-        # Method 1: Check PyInstaller bundle directory first
+        # Method 1: For ffmpeg/ffprobe, check system paths first (more reliable)
+        if name in ['ffmpeg', 'ffprobe']:
+            # Check system PATH first
+            import shutil
+            system_binary = shutil.which(binary_filename)
+            if system_binary:
+                logger.info(f"Found system binary in PATH: {name} at {system_binary}")
+                return system_binary
+            
+            # Check common install locations
+            system_locations = [
+                Path("C:/ffmpeg/bin") / binary_filename,
+                Path("C:/Program Files/ffmpeg/bin") / binary_filename,
+                Path("C:/Program Files (x86)/ffmpeg/bin") / binary_filename,
+            ]
+            
+            for system_path in system_locations:
+                if system_path.exists():
+                    logger.info(f"Found system binary: {name} at {system_path}")
+                    return str(system_path)
+        
+        # Method 2: Check PyInstaller bundle directory for other binaries
         if self.is_bundle:
             # Check in root of bundle
             bundle_path = self.bundle_dir / binary_filename
@@ -146,7 +167,7 @@ class ResourceManager:
                     logger.info(f"Found alternative resource Real-CUGAN binary: {alt_name} at {alt_resource_path}")
                     return str(alt_resource_path)
         
-        logger.warning(f"Binary not found: {name} (searched: bundle={self.is_bundle}, resource_dir={self.binaries_dir})")
+        logger.warning(f"Binary not found: {name} (searched: bundle={self.is_bundle}, resource_dir={self.binaries_dir}, system paths)")
         return None
     
     def check_binary_availability(self) -> Dict[str, bool]:

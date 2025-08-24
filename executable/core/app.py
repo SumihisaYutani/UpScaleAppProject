@@ -25,15 +25,18 @@ def setup_logging():
     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     log_file = logs_dir / f"upscale_app_{timestamp}.log"
     
-    # Configure root logger
+    # Configure root logger with line numbers
     logging.basicConfig(
         level=logging.DEBUG,
-        format='%(asctime)s - %(levelname)s - %(name)s - %(message)s',
+        format='%(asctime)s - %(levelname)s - %(name)s:%(lineno)d - %(message)s',
         handlers=[
             logging.FileHandler(log_file, encoding='utf-8'),
             logging.StreamHandler(sys.stdout)
         ]
     )
+    
+    # Suppress noisy PIL debug messages
+    logging.getLogger('PIL').setLevel(logging.INFO)
     
     logger = logging.getLogger(__name__)
     logger.info(f"Logging initialized - Log file: {log_file}")

@@ -140,11 +140,25 @@ class OptimizedParallelProcessor:
         total_frames = len(frame_paths)
         processed_frames = []
         
+        # === DEBUG: 処理開始時の詳細情報を記録 ===
+        logger.info(f"=== PARALLEL PROCESSING DEBUG START ===")
+        logger.info(f"Total input frames: {total_frames}")
+        logger.info(f"Current workers: {self.current_workers}")
+        logger.info(f"Max workers: {self.max_workers}")
+        logger.info(f"Output directory: {output_dir}")
+        logger.info(f"Scale factor: {scale_factor}")
+        logger.info(f"First few frame paths: {frame_paths[:3] if frame_paths else 'None'}")
+        logger.info(f"Last few frame paths: {frame_paths[-3:] if len(frame_paths) >= 3 else frame_paths}")
+        logger.info(f"===========================================")
+        
         logger.info(f"Starting parallel processing of {total_frames} frames with {self.current_workers} workers")
         
         # フレームを分割してワーカーに配布
         with concurrent.futures.ThreadPoolExecutor(max_workers=self.current_workers) as executor:
             future_to_frame = {}
+            
+            # === DEBUG: フレーム投入段階をトラッキング ===
+            frames_submitted = 0
             
             for i, frame_path in enumerate(frame_paths):
                 # 動的並列度調整
@@ -154,20 +168,44 @@ class OptimizedParallelProcessor:
                 frame_name = Path(frame_path).stem
                 output_path = output_dir / f"{frame_name}_upscaled.png"
                 
+                # === DEBUG: フレーム投入の詳細ログ ===
+                frames_submitted += 1
+                if frames_submitted <= 10 or frames_submitted % 100 == 0 or frames_submitted > total_frames - 10:
+                    logger.info(f"DEBUG: Submitting frame {frames_submitted}/{total_frames}: {Path(frame_path).name} -> {Path(output_path).name}")
+                
                 future = executor.submit(
                     self._process_single_frame,
                     frame_path, str(output_path), scale_factor, i, total_frames, progress_dialog
                 )
                 future_to_frame[future] = (i, frame_path, str(output_path))
             
+            # === DEBUG: 投入完了ログ ===
+            logger.info(f"DEBUG: All {frames_submitted} frames submitted to executor")
+            logger.info(f"DEBUG: Active futures count: {len(future_to_frame)}")
+            
             # 結果を収集
+            # === DEBUG: 結果収集段階の追跡 ===
+            completed_count = 0
+            success_count = 0
+            error_count = 0
+            
             for future in concurrent.futures.as_completed(future_to_frame):
                 frame_index, frame_path, output_path = future_to_frame[future]
+                completed_count += 1
+                
                 try:
                     success, processing_time = future.result()
                     
                     if success:
                         processed_frames.append(output_path)
+                        success_count += 1
+                        
+                        # === DEBUG: 成功時の詳細ログ ===
+                        if success_count <= 10 or success_count % 50 == 0:
+                            logger.info(f"DEBUG: Frame {frame_index + 1} SUCCESS: {Path(frame_path).name} -> {Path(output_path).name} ({processing_time:.2f}s)")
+                    else:
+                        error_count += 1
+                        logger.warning(f"DEBUG: Frame {frame_index + 1} FAILED: {Path(frame_path).name}")
                     
                     # 進捗更新
                     self.processed_count += 1
@@ -184,14 +222,42 @@ class OptimizedParallelProcessor:
                         logger.info(f"Performance: {stats.throughput:.2f} fps, "
                                   f"avg: {stats.avg_time:.2f}s, workers: {self.current_workers}")
                     
+                    # === DEBUG: 重要な節目での詳細状況ログ ===
+                    if completed_count in [50, 100, 200, 300, 400, 500] or completed_count % 500 == 0:
+                        logger.info(f"DEBUG: Milestone - Completed: {completed_count}/{len(future_to_frame)}, "
+                                  f"Success: {success_count}, Errors: {error_count}, "
+                                  f"Output files: {len(processed_frames)}")
+                    
                 except Exception as e:
-                    logger.error(f"Error processing frame {frame_path}: {e}")
+                    error_count += 1
+                    logger.error(f"ERROR processing frame {frame_index + 1} ({Path(frame_path).name}): {e}")
         
         # 最終統計
         final_stats = self.monitor.get_current_stats()
-        logger.info(f"Parallel processing completed: {len(processed_frames)}/{total_frames} frames")
-        logger.info(f"Final performance: {final_stats.throughput:.2f} fps, "
-                   f"avg time: {final_stats.avg_time:.2f}s")
+        
+        # === DEBUG: 最終結果の詳細分析 ===
+        logger.info(f"=== PARALLEL PROCESSING DEBUG END ===")
+        logger.info(f"Total frames submitted: {frames_submitted}")
+        logger.info(f"Total futures completed: {completed_count}")
+        logger.info(f"Total successful frames: {success_count}")
+        logger.info(f"Total failed frames: {error_count}")
+        logger.info(f"Output frames generated: {len(processed_frames)}")
+        logger.info(f"Expected vs Actual: {total_frames} -> {len(processed_frames)} ({len(processed_frames)/total_frames*100:.1f}%)")
+        logger.info(f"Final performance: {final_stats.throughput:.2f} fps, avg time: {final_stats.avg_time:.2f}s")
+        
+        # === DEBUG: 処理できなかったフレームの分析 ===
+        if len(processed_frames) < total_frames:
+            missing_count = total_frames - len(processed_frames)
+            logger.warning(f"WARNING: {missing_count} frames were not processed!")
+            logger.warning(f"This indicates a problem in the parallel processing pipeline")
+            
+            # 出力ディレクトリの実際のファイル数も確認
+            actual_files = list(output_dir.glob("*_upscaled.png"))
+            logger.info(f"DEBUG: Actual files in output directory: {len(actual_files)}")
+            if len(actual_files) != len(processed_frames):
+                logger.warning(f"WARNING: File count mismatch! List: {len(processed_frames)}, Directory: {len(actual_files)}")
+        
+        logger.info(f"==========================================")
         
         return processed_frames
     

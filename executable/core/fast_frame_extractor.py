@@ -255,7 +255,9 @@ class FastFrameExtractor:
                     cmd, 
                     capture_output=True, 
                     text=True, 
-                    creationflags=subprocess.CREATE_NO_WINDOW
+                    creationflags=subprocess.CREATE_NO_WINDOW,
+                    shell=False,
+                    encoding='utf-8'
                 )
                 
                 if result.returncode != 0:
@@ -362,7 +364,9 @@ class FastFrameExtractor:
             cmd, 
             capture_output=True, 
             text=True, 
-            creationflags=subprocess.CREATE_NO_WINDOW
+            creationflags=subprocess.CREATE_NO_WINDOW,
+            shell=False,
+            encoding='utf-8'
         )
         
         if result.returncode != 0:
