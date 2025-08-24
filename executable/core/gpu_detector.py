@@ -6,6 +6,7 @@ Consolidated GPU detection for all supported backends
 import os
 import subprocess
 import logging
+import shutil
 from typing import Dict, List, Optional, Any
 from pathlib import Path
 
@@ -220,27 +221,68 @@ class GPUDetector:
         
         try:
             # Try vulkaninfo if available
-            vulkaninfo_path = self.resource_manager.get_binary_path('vulkaninfo')
-            if vulkaninfo_path:
-                result = subprocess.run(
-                    [vulkaninfo_path, '--summary'],
-                    capture_output=True, text=True, timeout=10
-                )
+            vulkaninfo_path = None
+            try:
+                vulkaninfo_path = self.resource_manager.get_binary_path('vulkaninfo')
+                if not vulkaninfo_path:
+                    vulkaninfo_path = shutil.which("vulkaninfo")
+            except Exception as e:
+                logger.debug(f"vulkaninfo path detection failed: {e}")
+                vulkaninfo_path = None
                 
-                if result.returncode == 0:
-                    # Parse vulkaninfo output for device names
-                    lines = result.stdout.split('\n')
-                    for line in lines:
-                        line = line.strip()
-                        if 'deviceName' in line or 'GPU' in line:
-                            # Extract device name
-                            if '=' in line:
-                                device_name = line.split('=')[1].strip().strip('"')
-                                if device_name and device_name not in [d.get('name') for d in info['devices']]:
-                                    info['devices'].append({'name': device_name})
+            if vulkaninfo_path:
+                try:
+                    result = subprocess.run(
+                        [vulkaninfo_path, '--summary'],
+                        capture_output=True, text=True, timeout=10
+                    )
                     
-                    if info['devices']:
+                    if result.returncode == 0:
+                        # Parse vulkaninfo output for device names
+                        lines = result.stdout.split('\n')
+                        for line in lines:
+                            line = line.strip()
+                            if 'deviceName' in line or 'GPU' in line:
+                                # Extract device name
+                                if '=' in line:
+                                    device_name = line.split('=')[1].strip().strip('"')
+                                    if device_name and device_name not in [d.get('name') for d in info['devices']]:
+                                        info['devices'].append({'name': device_name})
+                        
+                        if info['devices']:
+                            info['available'] = True
+                            logger.info(f"Vulkan devices detected via vulkaninfo: {[d.get('name') for d in info['devices']]}")
+                            return info
+                except Exception as e:
+                    logger.debug(f"vulkaninfo execution failed: {e}")
+            
+            # Fallback: Assume Vulkan is available if AMD/NVIDIA GPU detected
+            logger.info("vulkaninfo not available, using GPU-based Vulkan detection")
+            
+            # Check for AMD GPUs with Vulkan support (modern AMD drivers include Vulkan)
+            try:
+                amd_info = self._detect_amd_gpus()
+                if amd_info['available'] and amd_info['gpus']:
+                    for gpu in amd_info['gpus']:
+                        gpu_name = gpu.get('name', '').upper()
+                        # Modern AMD GPUs (Vega, RDNA series) support Vulkan
+                        if any(keyword in gpu_name for keyword in ['VEGA', 'RX', 'RADEON', 'NAVI', 'RDNA']):
+                            info['devices'].append({'name': gpu['name'], 'type': 'amd_vulkan'})
+                            info['available'] = True
+                            logger.info(f"AMD GPU with Vulkan support detected: {gpu['name']}")
+            except Exception as e:
+                logger.debug(f"AMD GPU Vulkan detection failed: {e}")
+            
+            # Check for NVIDIA GPUs (modern NVIDIA drivers include Vulkan)
+            try:
+                nvidia_info = self._detect_nvidia_gpus()
+                if nvidia_info['available'] and nvidia_info['gpus']:
+                    for gpu in nvidia_info['gpus']:
+                        info['devices'].append({'name': gpu['name'], 'type': 'nvidia_vulkan'})
                         info['available'] = True
+                        logger.info(f"NVIDIA GPU with Vulkan support detected: {gpu['name']}")
+            except Exception as e:
+                logger.debug(f"NVIDIA GPU Vulkan detection failed: {e}")
             
         except Exception as e:
             logger.debug(f"Vulkan GPU detection failed: {e}")

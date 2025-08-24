@@ -42,10 +42,16 @@ class SessionManager:
             'noise_reduction': settings.get('noise_reduction', 3)
         }
         
-        session_string = json.dumps(session_data, sort_keys=True)
-        session_hash = hashlib.md5(session_string.encode()).hexdigest()[:12]
+        # === DEBUG: セッションID生成の詳細ログ ===
+        logger.info(f"=== SESSION ID DEBUG: Generating session ID ===")
+        logger.info(f"Session data: {session_data}")
         
-        logger.debug(f"Generated session ID: {session_hash} for {Path(video_path).name}")
+        session_string = json.dumps(session_data, sort_keys=True)
+        logger.info(f"Session string: {session_string}")
+        
+        session_hash = hashlib.md5(session_string.encode()).hexdigest()[:12]
+        logger.info(f"Generated session ID: {session_hash} for {Path(video_path).name}")
+        
         return session_hash
     
     def get_session_dir(self, session_id: str) -> Path:
@@ -127,14 +133,46 @@ class SessionManager:
             # Update timestamp
             progress_data['last_updated'] = datetime.now().isoformat()
             
+            # === DEBUG: セッション保存の詳細ログ ===
+            completed_frames = progress_data.get('steps', {}).get('upscale', {}).get('completed_frames', [])
+            logger.info(f"=== SESSION DEBUG: Saving progress for session {session_id} ===")
+            logger.info(f"Session directory: {session_dir}")
+            logger.info(f"Progress file: {progress_file}")
+            logger.info(f"Saving {len(completed_frames)} completed frames")
+            
+            # Ensure session directory exists
+            if not session_dir.exists():
+                logger.info(f"Creating session directory: {session_dir}")
+                session_dir.mkdir(parents=True, exist_ok=True)
+            
+            # Verify directory is writable
+            test_file = session_dir / "test_write.tmp"
+            try:
+                with open(test_file, 'w') as f:
+                    f.write("test")
+                test_file.unlink()
+                logger.info("Directory is writable")
+            except Exception as test_e:
+                logger.error(f"Directory is not writable: {test_e}")
+                raise
+            
             # Save with pretty formatting for debugging
+            logger.info(f"Writing to file: {progress_file}")
             with open(progress_file, 'w', encoding='utf-8') as f:
                 json.dump(progress_data, f, indent=2, ensure_ascii=False)
             
-            logger.debug(f"Saved progress for session {session_id}")
+            # Verify file was created
+            if progress_file.exists():
+                file_size = progress_file.stat().st_size
+                logger.info(f"Progress saved successfully: {file_size} bytes")
+            else:
+                logger.error("Progress file was not created despite no errors")
             
         except Exception as e:
             logger.error(f"Failed to save progress for session {session_id}: {e}")
+            import traceback
+            logger.error(f"Full traceback: {traceback.format_exc()}")
+            raise
     
     def load_progress(self, session_id: str) -> Optional[Dict[str, Any]]:
         """Load progress data from JSON file"""
@@ -148,7 +186,12 @@ class SessionManager:
             with open(progress_file, 'r', encoding='utf-8') as f:
                 progress_data = json.load(f)
             
-            logger.debug(f"Loaded progress for session {session_id}")
+            # === DEBUG: セッション読み込みの詳細ログ ===
+            completed_frames = progress_data.get('steps', {}).get('upscale', {}).get('completed_frames', [])
+            logger.info(f"=== SESSION DEBUG: Loaded progress for session {session_id} ===")
+            logger.info(f"Progress file: {progress_file}")
+            logger.info(f"Loaded {len(completed_frames)} completed frames")
+            
             return progress_data
             
         except Exception as e:
@@ -157,35 +200,89 @@ class SessionManager:
     
     def find_resumable_session(self, video_path: str, settings: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """Find existing resumable session for given video and settings"""
+        # === DEBUG: レジューム検索の詳細ログ ===
+        logger.info(f"=== RESUME DEBUG: Searching for resumable session ===")
+        logger.info(f"Video path: {video_path}")
+        logger.info(f"Settings: {settings}")
+        
         session_id = self.generate_session_id(video_path, settings)
+        logger.info(f"Generated session ID: {session_id}")
+        
         progress_data = self.load_progress(session_id)
         
-        if progress_data and self._is_session_resumable(progress_data):
+        if not progress_data:
+            logger.info("No progress data found for this session")
+            return None
+        
+        logger.info("Progress data found, checking if resumable...")
+        resumable = self._is_session_resumable(progress_data)
+        
+        if resumable:
             logger.info(f"Found resumable session {session_id} for {Path(video_path).name}")
             return progress_data
-        
-        return None
+        else:
+            logger.info(f"Session {session_id} exists but is not resumable")
+            return None
     
     def _is_session_resumable(self, progress_data: Dict[str, Any]) -> bool:
         """Check if session can be resumed"""
         try:
+            # === DEBUG: レジューム可能性チェックの詳細ログ ===
+            logger.info(f"=== RESUME DEBUG: Checking if session is resumable ===")
+            
             # Check if video file still exists
             video_path = progress_data.get('video_file')
-            if not video_path or not Path(video_path).exists():
+            logger.info(f"Video file in session: {video_path}")
+            
+            if not video_path:
+                logger.info("No video file path in progress data - not resumable")
                 return False
             
-            # Check if session is not too old (e.g., older than 7 days)
-            last_updated = datetime.fromisoformat(progress_data.get('last_updated', ''))
-            if datetime.now() - last_updated > timedelta(days=7):
+            if not Path(video_path).exists():
+                logger.info(f"Video file does not exist: {video_path} - not resumable")
                 return False
+            
+            logger.info("Video file exists")
+            
+            # Check if session is not too old (e.g., older than 7 days)
+            last_updated_str = progress_data.get('last_updated', '')
+            logger.info(f"Last updated: {last_updated_str}")
+            
+            if last_updated_str:
+                last_updated = datetime.fromisoformat(last_updated_str)
+                age = datetime.now() - last_updated
+                logger.info(f"Session age: {age}")
+                
+                if age > timedelta(days=7):
+                    logger.info("Session is too old (>7 days) - not resumable")
+                    return False
+            
+            logger.info("Session age is acceptable")
             
             # Check if any meaningful progress was made
             steps = progress_data.get('steps', {})
-            for step_name, step_data in steps.items():
-                if step_data.get('status') in ['completed', 'in_progress']:
-                    return True
+            logger.info(f"Steps in session: {list(steps.keys())}")
             
-            return False
+            has_progress = False
+            for step_name, step_data in steps.items():
+                status = step_data.get('status')
+                logger.info(f"Step {step_name}: status = {status}")
+                
+                if status in ['completed', 'in_progress', 'cancelled', 'failed']:
+                    has_progress = True
+                    logger.info(f"Found meaningful progress in step {step_name} (status: {status})")
+                    
+                    # Check for completed frames specifically
+                    if step_name == 'upscale':
+                        completed_frames = step_data.get('completed_frames', [])
+                        logger.info(f"Upscale step has {len(completed_frames)} completed frames")
+            
+            if has_progress:
+                logger.info("Session has meaningful progress - resumable")
+            else:
+                logger.info("No meaningful progress found - not resumable")
+            
+            return has_progress
             
         except Exception as e:
             logger.warning(f"Error checking session resumability: {e}")
@@ -239,14 +336,23 @@ class SessionManager:
     
     def add_completed_frame(self, session_id: str, frame_path: str) -> None:
         """Add completed frame to upscale step tracking"""
+        # === DEBUG: フレーム追加処理の詳細ログ ===
+        logger.info(f"=== SESSION DEBUG: Adding frame to session {session_id} ===")
+        logger.info(f"Frame path: {frame_path}")
+        
         progress_data = self.load_progress(session_id)
         if not progress_data:
+            logger.warning(f"No progress data found for session {session_id}")
             return
         
         upscale_step = progress_data['steps']['upscale']
         completed_frames = upscale_step.get('completed_frames', [])
         
+        logger.info(f"Current completed frames count: {len(completed_frames)}")
+        
         normalized_frame_path = frame_path.replace('\\', '/')
+        logger.info(f"Normalized path: {normalized_frame_path}")
+        
         if normalized_frame_path not in completed_frames:
             completed_frames.append(normalized_frame_path)
             upscale_step['completed_frames'] = completed_frames
@@ -256,16 +362,33 @@ class SessionManager:
             if total_frames > 0:
                 progress = len(completed_frames) / total_frames * 100
                 upscale_step['progress'] = progress
+                logger.info(f"Progress updated: {len(completed_frames)}/{total_frames} ({progress:.1f}%)")
             
+            logger.info(f"Frame added successfully. New total: {len(completed_frames)}")
             self.save_progress(session_id, progress_data)
+        else:
+            logger.info(f"Frame already exists in session, skipping duplicate")
     
     def get_completed_frames(self, session_id: str) -> List[str]:
         """Get list of completed upscaled frames"""
+        # === DEBUG: フレーム取得処理の詳細ログ ===
+        logger.info(f"=== SESSION DEBUG: Getting completed frames for session {session_id} ===")
+        
         progress_data = self.load_progress(session_id)
         if not progress_data:
+            logger.warning(f"No progress data found for session {session_id}")
             return []
         
-        return progress_data['steps']['upscale'].get('completed_frames', [])
+        completed_frames = progress_data['steps']['upscale'].get('completed_frames', [])
+        logger.info(f"Retrieved {len(completed_frames)} completed frames from session")
+        
+        if completed_frames:
+            logger.info(f"First frame: {completed_frames[0]}")
+            logger.info(f"Last frame: {completed_frames[-1]}")
+        else:
+            logger.warning("No completed frames found in session data")
+        
+        return completed_frames
     
     def get_remaining_frames(self, session_id: str, all_frames: List[str]) -> List[str]:
         """Get list of frames that still need processing"""

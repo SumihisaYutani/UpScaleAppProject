@@ -62,13 +62,16 @@ class VideoProcessor:
                 logger.warning("FFprobe not available, using OpenCV fallback")
                 return self._validate_video_with_opencv(video_path)
             
+            # Ensure proper path handling for special characters
+            video_path_str = str(video_path)
+            
             cmd = [
                 ffprobe_path,
                 '-v', 'quiet',
                 '-print_format', 'json',
                 '-show_format',
                 '-show_streams',
-                str(video_path)
+                video_path_str
             ]
             
             # Hide console window on Windows
@@ -78,9 +81,25 @@ class VideoProcessor:
                 startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
                 startupinfo.wShowWindow = subprocess.SW_HIDE
             
-            result = subprocess.run(cmd, capture_output=True, text=True, startupinfo=startupinfo)
+            logger.info(f"DEBUG: Executing ffprobe command: {' '.join(cmd)}")
+            logger.info(f"DEBUG: Video path: '{video_path_str}' (length: {len(video_path_str)})")
+            
+            # Use shell=False and ensure proper encoding on Windows
+            result = subprocess.run(
+                cmd, 
+                capture_output=True, 
+                text=True, 
+                startupinfo=startupinfo,
+                shell=False,
+                encoding='utf-8'
+            )
+            
+            logger.info(f"DEBUG: FFprobe return code: {result.returncode}")
+            logger.info(f"DEBUG: FFprobe stdout length: {len(result.stdout) if result.stdout else 0}")
+            logger.info(f"DEBUG: FFprobe stderr: {result.stderr}")
             
             if result.returncode != 0:
+                logger.error(f"DEBUG: FFprobe failed with return code {result.returncode}")
                 return {
                     'valid': False,
                     'error': f'FFprobe failed: {result.stderr}',
@@ -89,7 +108,8 @@ class VideoProcessor:
             
             # Parse JSON output
             try:
-                if not result.stdout.strip():
+                if not result.stdout or not result.stdout.strip():
+                    logger.error(f"DEBUG: FFprobe returned empty output - stdout: '{result.stdout}'")
                     return {
                         'valid': False,
                         'error': 'FFprobe returned empty output',
@@ -259,9 +279,16 @@ class VideoProcessor:
                 startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
                 startupinfo.wShowWindow = subprocess.SW_HIDE
             
-            result = subprocess.run(cmd, capture_output=True, text=True, startupinfo=startupinfo)
+            result = subprocess.run(
+                cmd, 
+                capture_output=True, 
+                text=True, 
+                startupinfo=startupinfo,
+                shell=False,
+                encoding='utf-8'
+            )
             
-            if result.returncode == 0 and result.stdout.strip():
+            if result.returncode == 0 and result.stdout and result.stdout.strip():
                 frame_count = int(result.stdout.strip())
                 logger.info(f"DEBUG: ffprobe frame count result: {frame_count}")
                 return frame_count
@@ -765,8 +792,28 @@ class VideoProcessor:
             if not ffmpeg_path:
                 raise RuntimeError("FFmpeg not available")
             
+            # === DEBUG: フレーム結合開始時の詳細情報 ===
+            logger.info(f"=== FRAME COMBINATION DEBUG START ===")
+            logger.info(f"Input frame paths count: {len(frame_paths)}")
+            logger.info(f"First frame path: {frame_paths[0] if frame_paths else 'None'}")
+            logger.info(f"Last frame path: {frame_paths[-1] if frame_paths else 'None'}")
+            logger.info(f"Output video path: {output_path}")
+            logger.info(f"Original video path: {original_video_path}")
+            
+            # フレームファイルの実際の存在確認
+            existing_frames = []
+            for i, frame_path in enumerate(frame_paths):
+                if Path(frame_path).exists():
+                    existing_frames.append(frame_path)
+                else:
+                    logger.warning(f"DEBUG: Frame {i+1} does not exist: {frame_path}")
+            
+            logger.info(f"DEBUG: Total existing frames: {len(existing_frames)}/{len(frame_paths)}")
+            if len(existing_frames) != len(frame_paths):
+                logger.warning(f"WARNING: {len(frame_paths) - len(existing_frames)} frames are missing!")
+            
             # Get accurate frame rate from original video
-            logger.info(f"DEBUG: Getting accurate frame rate from original video: {original_video_path}")
+            logger.info(f"DEBUG: Getting accurate frame rate from original video: {Path(original_video_path).name}")
             video_info = self.validate_video(original_video_path)
             if video_info['valid']:
                 accurate_fps = video_info['info']['frame_rate']
@@ -874,8 +921,12 @@ class VideoProcessor:
             'complexity_score': pixels_per_frame / 1000000  # MP rating
         }
     
-    def cleanup(self):
-        """Clean up video processor resources with enhanced memory management"""
+    def cleanup(self, preserve_frames=False):
+        """Clean up video processor resources with enhanced memory management
+        
+        Args:
+            preserve_frames: If True, preserve frame files for resume functionality
+        """
         try:
             # Kill any running ffmpeg processes
             self._kill_ffmpeg_processes()
@@ -884,41 +935,69 @@ class VideoProcessor:
             import gc
             gc.collect()
             
-            # Clean up frame directory with memory-efficient approach
-            if self.frame_dir.exists():
-                self._cleanup_directory_contents(self.frame_dir, "*.png")
-                self._cleanup_directory_contents(self.frame_dir, "*.jpg")
+            if preserve_frames:
+                logger.info("DEBUG: Cleanup with frame preservation for resume functionality")
                 
-                # Clean up batch directories if they exist
-                for batch_dir in self.frame_dir.glob("batch_*"):
-                    if batch_dir.is_dir():
-                        self._cleanup_directory_contents(batch_dir, "*")
+                # Only clean up batch directories and temp files, not extracted frames
+                if self.frame_dir.exists():
+                    # Clean up batch directories if they exist
+                    for batch_dir in self.frame_dir.glob("batch_*"):
+                        if batch_dir.is_dir():
+                            self._cleanup_directory_contents(batch_dir, "*")
+                            try:
+                                batch_dir.rmdir()
+                            except:
+                                pass
+                    
+                    # Clean up upscaled directory if it exists
+                    upscaled_dir = self.temp_dir / "upscaled"
+                    if upscaled_dir.exists():
+                        self._cleanup_directory_contents(upscaled_dir, "*.png")
                         try:
-                            batch_dir.rmdir()
+                            upscaled_dir.rmdir()
                         except:
                             pass
                 
-                # Also clean up upscaled directory if it exists
-                upscaled_dir = self.temp_dir / "upscaled"
-                if upscaled_dir.exists():
-                    self._cleanup_directory_contents(upscaled_dir, "*.png")
-                    try:
-                        upscaled_dir.rmdir()
-                    except:
-                        pass
+                logger.info("DEBUG: Preserved frames for resume, cleaned up temp files only")
                 
-                # Clean up entire temp directory
-                try:
-                    import shutil
-                    shutil.rmtree(self.temp_dir, ignore_errors=True)
-                    logger.info(f"Cleaned up temp directory: {self.temp_dir}")
-                except Exception as e:
-                    logger.warning(f"Failed to remove temp directory: {e}")
+            else:
+                logger.info("DEBUG: Full cleanup - removing all temp files including frames")
+                
+                # Full cleanup - remove everything
+                if self.frame_dir.exists():
+                    self._cleanup_directory_contents(self.frame_dir, "*.png")
+                    self._cleanup_directory_contents(self.frame_dir, "*.jpg")
                     
-                # Final garbage collection
-                gc.collect()
+                    # Clean up batch directories if they exist
+                    for batch_dir in self.frame_dir.glob("batch_*"):
+                        if batch_dir.is_dir():
+                            self._cleanup_directory_contents(batch_dir, "*")
+                            try:
+                                batch_dir.rmdir()
+                            except:
+                                pass
+                    
+                    # Also clean up upscaled directory if it exists
+                    upscaled_dir = self.temp_dir / "upscaled"
+                    if upscaled_dir.exists():
+                        self._cleanup_directory_contents(upscaled_dir, "*.png")
+                        try:
+                            upscaled_dir.rmdir()
+                        except:
+                            pass
+                    
+                    # Clean up entire temp directory
+                    try:
+                        import shutil
+                        shutil.rmtree(self.temp_dir, ignore_errors=True)
+                        logger.info(f"Cleaned up temp directory: {self.temp_dir}")
+                    except Exception as e:
+                        logger.warning(f"Failed to remove temp directory: {e}")
                 
-                logger.info("Cleaned up video processor resources")
+            # Final garbage collection
+            gc.collect()
+            
+            logger.info("Cleaned up video processor resources")
         except Exception as e:
             logger.warning(f"Cleanup warning: {e}")
     
@@ -1008,19 +1087,19 @@ class VideoProcessor:
                     import shutil
                     shutil.rmtree(batch_dir, ignore_errors=True)
             
-            # Clean up any old frame files
-            frame_files = list(self.frame_dir.glob("frame_*.png"))
-            if len(frame_files) > 1000:  # Keep only most recent 1000 frames
-                sorted_frames = sorted(frame_files, key=lambda x: x.stat().st_mtime)
-                files_to_remove = sorted_frames[:-1000]
-                
-                for file_path in files_to_remove:
-                    try:
-                        file_path.unlink()
-                    except:
-                        pass
-                
-                logger.info(f"Removed {len(files_to_remove)} old frame files to free memory")
+            # === FIXED: Do NOT delete frame files during processing ===
+            # The original code was deleting frame files needed for AI upscaling
+            # Only clean up temporary batch files and other temp data
+            logger.info("DEBUG: Aggressive cleanup - preserving frame files for processing")
+            
+            # Clean up any temporary working directories
+            temp_dirs = ["temp_work", "batch_temp", "conversion_temp"]
+            for temp_name in temp_dirs:
+                temp_path = self.frame_dir / temp_name
+                if temp_path.exists() and temp_path.is_dir():
+                    import shutil
+                    shutil.rmtree(temp_path, ignore_errors=True)
+                    logger.info(f"DEBUG: Cleaned up temporary directory: {temp_name}")
             
             # Force garbage collection
             import gc

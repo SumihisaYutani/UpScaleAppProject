@@ -7,6 +7,8 @@ import os
 import subprocess
 import tempfile
 import logging
+import time
+import psutil
 from pathlib import Path
 from typing import Dict, Any, Optional
 from PIL import Image
@@ -92,13 +94,22 @@ class RealCUGANBackend:
     
     def get_info(self) -> Dict[str, Any]:
         """Get backend information"""
-        gpu_available = self.gpu_info.get('vulkan', {}).get('available', False)
+        vulkan_available = self.gpu_info.get('vulkan', {}).get('available', False)
+        amd_gpu_available = len(self.gpu_info.get('amd', {}).get('gpus', [])) > 0
+        nvidia_gpu_available = len(self.gpu_info.get('nvidia', {}).get('gpus', [])) > 0
+        
+        # Consider GPU acceleration available if we have Vulkan OR discrete GPU
+        gpu_available = vulkan_available or amd_gpu_available or nvidia_gpu_available
+        
         return {
             'name': 'Real-CUGAN',
             'version': 'NCNN-Vulkan',
             'description': 'Real-CUGAN for anime/illustration upscaling',
             'gpu_acceleration': gpu_available,
             'gpu_mode': gpu_available,  # Add gpu_mode for compatibility
+            'vulkan_support': vulkan_available,
+            'amd_gpu_count': len(self.gpu_info.get('amd', {}).get('gpus', [])),
+            'nvidia_gpu_count': len(self.gpu_info.get('nvidia', {}).get('gpus', [])),
             'models': list(self.models.keys()),
             'current_model': self.current_model,
             'available': self.available
@@ -114,9 +125,46 @@ class RealCUGANBackend:
             logger.warning(f"Unknown Real-CUGAN model: {model_name}")
             return False
     
+    def _monitor_gpu_status(self) -> Dict[str, Any]:
+        """Monitor GPU status and detect issues"""
+        vulkan_available = self.gpu_info.get('vulkan', {}).get('available', False)
+        amd_gpu_available = len(self.gpu_info.get('amd', {}).get('gpus', [])) > 0
+        
+        # Consider GPU available if either Vulkan is detected OR AMD GPU is present
+        gpu_available = vulkan_available or amd_gpu_available
+        
+        gpu_status = {
+            'timestamp': time.time(),
+            'cpu_usage': psutil.cpu_percent(interval=0.1),
+            'memory_usage': psutil.virtual_memory().percent,
+            'gpu_available': gpu_available,
+            'vulkan_available': vulkan_available,
+            'amd_gpu_count': len(self.gpu_info.get('amd', {}).get('gpus', [])),
+            'nvidia_gpu_count': len(self.gpu_info.get('nvidia', {}).get('gpus', [])),
+            'warnings': []
+        }
+        
+        # Check for potential issues
+        if gpu_status['cpu_usage'] > 90:
+            gpu_status['warnings'].append("High CPU usage detected")
+        if gpu_status['memory_usage'] > 85:
+            gpu_status['warnings'].append("High memory usage detected")
+        
+        logger.info(f"GPU Status: {gpu_status}")
+        return gpu_status
+
     def upscale_image(self, input_path: str, output_path: str, scale_factor: float = 2.0, progress_dialog=None) -> bool:
-        """Upscale a single image using Real-CUGAN"""
+        """Upscale a single image using Real-CUGAN with comprehensive debugging"""
+        start_time = time.time()
+        gpu_status_start = self._monitor_gpu_status()
+        
         try:
+            logger.info(f"=== Real-CUGAN Debug Session Start ===")
+            logger.info(f"Input: {input_path}")
+            logger.info(f"Output: {output_path}")
+            logger.info(f"Scale: {scale_factor}")
+            logger.info(f"GPU Status: {gpu_status_start}")
+            
             realcugan_path = self.resource_manager.get_binary_path('realcugan-ncnn-vulkan')
             if not realcugan_path:
                 logger.error("Real-CUGAN executable not found")
@@ -146,12 +194,17 @@ class RealCUGANBackend:
             ]
             
             # Add GPU acceleration if available
-            if self.gpu_info.get('vulkan', {}).get('available'):
+            vulkan_available = self.gpu_info.get('vulkan', {}).get('available', False)
+            amd_gpu_available = len(self.gpu_info.get('amd', {}).get('gpus', [])) > 0
+            nvidia_gpu_available = len(self.gpu_info.get('nvidia', {}).get('gpus', [])) > 0
+            
+            # Try GPU acceleration if we have any GPU available
+            if vulkan_available or amd_gpu_available or nvidia_gpu_available:
                 cmd.extend(['-g', '0'])  # Use GPU 0
-                logger.debug("Using Vulkan GPU acceleration")
+                logger.info(f"Using GPU acceleration - Vulkan: {vulkan_available}, AMD: {amd_gpu_available}, NVIDIA: {nvidia_gpu_available}")
             else:
                 cmd.extend(['-g', '-1'])  # Use CPU
-                logger.debug("Using CPU processing")
+                logger.info("Using CPU processing - no GPU detected")
             
             # Add additional optimization flags
             cmd.extend([
@@ -160,22 +213,44 @@ class RealCUGANBackend:
             ])
             
             logger.info(f"Real-CUGAN command: {' '.join(cmd)}")
+            logger.info(f"Working directory: {Path(realcugan_path).parent}")
             
-            # Execute Real-CUGAN with correct working directory
+            # Monitor process execution with timeout and status updates
             executable_dir = Path(realcugan_path).parent
+            process_start_time = time.time()
+            
+            logger.info("Starting Real-CUGAN process...")
             result = subprocess.run(
                 cmd, 
                 capture_output=True, 
                 text=True,
                 cwd=str(executable_dir),  # Set working directory
-                creationflags=subprocess.CREATE_NO_WINDOW
+                creationflags=subprocess.CREATE_NO_WINDOW,
+                timeout=300  # 5 minute timeout to prevent hanging
             )
             
-            logger.info(f"Real-CUGAN execution completed - returncode: {result.returncode}")
+            execution_time = time.time() - process_start_time
+            gpu_status_end = self._monitor_gpu_status()
+            
+            logger.info(f"=== Real-CUGAN Debug Session Complete ===")
+            logger.info(f"Execution time: {execution_time:.2f}s")
+            logger.info(f"Return code: {result.returncode}")
+            logger.info(f"GPU Status End: {gpu_status_end}")
+            
             if result.stdout:
                 logger.info(f"Real-CUGAN stdout: {result.stdout}")
             if result.stderr:
-                logger.info(f"Real-CUGAN stderr: {result.stderr}")
+                logger.warning(f"Real-CUGAN stderr: {result.stderr}")
+            
+            # Check for specific error patterns
+            if result.stderr:
+                error_lower = result.stderr.lower()
+                if 'idle' in error_lower or 'timeout' in error_lower:
+                    logger.error("DETECTED: GPU Driver idle/timeout error!")
+                if 'vulkan' in error_lower and 'error' in error_lower:
+                    logger.error("DETECTED: Vulkan driver error!")
+                if 'memory' in error_lower and ('out of' in error_lower or 'insufficient' in error_lower):
+                    logger.error("DETECTED: GPU memory error!")
             
             if result.returncode == 0:
                 # Verify output file was created
@@ -190,8 +265,25 @@ class RealCUGANBackend:
                 logger.error(f"Real-CUGAN stderr: {result.stderr}")
                 return False
                 
+        except subprocess.TimeoutExpired as e:
+            gpu_status_timeout = self._monitor_gpu_status()
+            execution_time = time.time() - start_time
+            logger.error(f"=== Real-CUGAN TIMEOUT ERROR ===")
+            logger.error(f"Process timed out after {execution_time:.2f}s")
+            logger.error(f"GPU Status at timeout: {gpu_status_timeout}")
+            logger.error(f"This likely indicates GPU driver idle detection")
+            logger.error(f"Timeout details: {e}")
+            return False
+            
         except Exception as e:
-            logger.error(f"Real-CUGAN upscaling error: {e}")
+            gpu_status_error = self._monitor_gpu_status()
+            execution_time = time.time() - start_time
+            logger.error(f"=== Real-CUGAN UNEXPECTED ERROR ===")
+            logger.error(f"Execution time: {execution_time:.2f}s")
+            logger.error(f"GPU Status at error: {gpu_status_error}")
+            logger.error(f"Error type: {type(e).__name__}")
+            logger.error(f"Error details: {e}")
+            logger.error(f"This may indicate driver issues or resource conflicts")
             return False
     
     def estimate_processing_time(self, image_path: str, scale_factor: float = 2.0) -> float:
@@ -203,8 +295,12 @@ class RealCUGANBackend:
                 pixels = width * height
             
             # Base processing time per megapixel (GPU vs CPU)
-            if self.gpu_info.get('vulkan', {}).get('available'):
-                # GPU processing (Vulkan) - much faster
+            vulkan_available = self.gpu_info.get('vulkan', {}).get('available', False)
+            amd_gpu_available = len(self.gpu_info.get('amd', {}).get('gpus', [])) > 0
+            nvidia_gpu_available = len(self.gpu_info.get('nvidia', {}).get('gpus', [])) > 0
+            
+            if vulkan_available or amd_gpu_available or nvidia_gpu_available:
+                # GPU processing - much faster
                 base_time_per_mp = 0.5  # seconds per megapixel
                 gpu_factor = 1.0
             else:
@@ -245,8 +341,37 @@ class RealCUGANBackend:
     
     def get_gpu_usage_info(self) -> Dict[str, Any]:
         """Get GPU usage information"""
+        vulkan_available = self.gpu_info.get('vulkan', {}).get('available', False)
+        amd_gpu_available = len(self.gpu_info.get('amd', {}).get('gpus', [])) > 0
+        nvidia_gpu_available = len(self.gpu_info.get('nvidia', {}).get('gpus', [])) > 0
+        
+        using_gpu = vulkan_available or amd_gpu_available or nvidia_gpu_available
+        
+        # Determine GPU type and device name
+        gpu_type = 'CPU'
+        gpu_device = 'CPU Only'
+        
+        if vulkan_available:
+            gpu_type = 'Vulkan'
+            vulkan_devices = self.gpu_info.get('vulkan', {}).get('devices', [])
+            if vulkan_devices:
+                gpu_device = vulkan_devices[0].get('name', 'Unknown Vulkan Device')
+        elif amd_gpu_available:
+            gpu_type = 'AMD'
+            amd_gpus = self.gpu_info.get('amd', {}).get('gpus', [])
+            if amd_gpus:
+                gpu_device = amd_gpus[0].get('name', 'Unknown AMD GPU')
+        elif nvidia_gpu_available:
+            gpu_type = 'NVIDIA'
+            nvidia_gpus = self.gpu_info.get('nvidia', {}).get('gpus', [])
+            if nvidia_gpus:
+                gpu_device = nvidia_gpus[0].get('name', 'Unknown NVIDIA GPU')
+        
         return {
-            'using_gpu': self.gpu_info.get('vulkan', {}).get('available', False),
-            'gpu_type': 'Vulkan',
-            'gpu_device': self.gpu_info.get('vulkan', {}).get('devices', [{}])[0].get('name', 'Unknown') if self.gpu_info.get('vulkan', {}).get('devices') else 'Unknown'
+            'using_gpu': using_gpu,
+            'gpu_type': gpu_type,
+            'gpu_device': gpu_device,
+            'vulkan_available': vulkan_available,
+            'amd_gpu_count': len(self.gpu_info.get('amd', {}).get('gpus', [])),
+            'nvidia_gpu_count': len(self.gpu_info.get('nvidia', {}).get('gpus', []))
         }

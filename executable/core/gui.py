@@ -704,8 +704,12 @@ class ProgressDialog:
         except:
             pass
         
-        # Clean up temporary files
-        self._cleanup_temp_files()
+        # Clean up temporary files (preserve frames for resume on error/cancel)
+        self._cleanup_temp_files(preserve_frames=True)
+        
+        # Notify main GUI about cancellation BEFORE closing dialog
+        if hasattr(self, 'main_gui') and self.main_gui:
+            self.main_gui._reset_processing_state()
         
         # Close progress dialog after short delay
         def close_dialog():
@@ -715,45 +719,79 @@ class ProgressDialog:
                 pass
         
         if GUI_AVAILABLE and ctk:
-            self.window.after(2000, close_dialog)
+            self.window.after(1000, close_dialog)  # Reduced delay
         else:
-            self.window.after(2000, close_dialog)
+            self.window.after(1000, close_dialog)
     
-    def _cleanup_temp_files(self):
-        """Clean up temporary files and directories"""
+    def _cleanup_temp_files(self, preserve_frames=False):
+        """Clean up temporary files and directories
+        
+        Args:
+            preserve_frames: If True, preserve frame files for resume functionality
+        """
         import shutil
+        
+        # === DEBUG: 一時ファイルクリーンアップの詳細ログ ===
+        logger.info(f"=== CLEANUP DEBUG: Starting temp files cleanup (preserve_frames={preserve_frames}) ===")
         
         try:
             # Clean up video processor if available
             if self.video_processor:
-                self.video_processor.cleanup()
+                logger.info(f"Cleaning up video processor, temp_dir: {self.video_processor.temp_dir}")
+                self.video_processor.cleanup(preserve_frames=preserve_frames)
             
             # Clean up temp directory if provided
-            if self.temp_dir and os.path.exists(self.temp_dir):
+            if self.temp_dir and os.path.exists(self.temp_dir) and not preserve_frames:
+                logger.info(f"=== CLEANUP DEBUG: About to remove temp directory: {self.temp_dir} ===")
+                
+                # Check if this is a session directory - DO NOT DELETE session directories during cleanup
+                if 'upscale_app_sessions' in str(self.temp_dir):
+                    logger.warning(f"=== CLEANUP PROTECTION: Refusing to delete session directory ===")
+                    logger.warning(f"Directory: {self.temp_dir}")
+                    logger.warning(f"Session directories must be preserved for resume functionality")
+                    # Skip deletion to preserve session data
+                    return
+                
                 try:
-                    # Remove all files in temp directory
+                    # Remove all files in temp directory (only for non-session directories)
                     shutil.rmtree(self.temp_dir, ignore_errors=True)
-                    logger.info(f"Cleaned up temp directory: {self.temp_dir}")
+                    logger.info(f"=== CLEANUP DEBUG: Removed temp directory: {self.temp_dir} ===")
                 except Exception as e:
                     logger.warning(f"Failed to clean up temp directory: {e}")
+            elif preserve_frames:
+                logger.info(f"=== CLEANUP DEBUG: Preserving temp directory for resume: {self.temp_dir} ===")
                     
-            # Additional cleanup for Windows temp files
-            if os.name == 'nt':
+            # Additional cleanup for Windows temp files (SAFE VERSION)
+            if os.name == 'nt' and not preserve_frames:
                 try:
                     import tempfile
                     temp_root = tempfile.gettempdir()
                     
-                    # Look for upscale related temp directories
+                    # === FIXED: Do NOT delete directories with frame files during processing ===
+                    # This was a major source of frame deletion issues
+                    logger.info("DEBUG: Windows temp cleanup - SAFE MODE (preserving session directories)")
+                    
+                    # Look for upscale related temp directories, but be much more conservative
                     for item in os.listdir(temp_root):
                         item_path = os.path.join(temp_root, item)
-                        if os.path.isdir(item_path) and ('upscale' in item.lower() or 'tmp' in item.lower()):
-                            # Check if directory contains frame files or is recent
+                        if os.path.isdir(item_path) and 'upscale' in item.lower():
+                            # === CRITICAL FIX: DO NOT delete directories containing frame files ===
+                            # Previously this was deleting active session directories
                             try:
                                 files = os.listdir(item_path)
-                                if any(f.startswith('frame_') and f.endswith('.png') for f in files):
+                                has_frames = any(f.startswith('frame_') and f.endswith('.png') for f in files)
+                                has_session_files = any(f in ['progress.json', 'session.json'] for f in files)
+                                
+                                if has_frames or has_session_files:
+                                    logger.info(f"DEBUG: Preserving active session directory: {item_path}")
+                                    continue  # SKIP deletion of active session directories
+                                
+                                # Only clean up truly empty or old non-session temp directories
+                                if len(files) == 0 or all(f.endswith('.tmp') for f in files):
                                     shutil.rmtree(item_path, ignore_errors=True)
-                                    logger.info(f"Cleaned up orphaned temp directory: {item_path}")
-                            except:
+                                    logger.info(f"Cleaned up empty temp directory: {item_path}")
+                            except Exception as cleanup_e:
+                                logger.warning(f"DEBUG: Error checking temp directory {item_path}: {cleanup_e}")
                                 pass
                                 
                 except Exception as e:
@@ -789,7 +827,7 @@ class MainGUI:
         # GUI variables
         self.input_path_var = tk.StringVar()
         self.output_path_var = tk.StringVar()
-        self.scale_var = tk.StringVar(value="2.0")
+        self.scale_var = tk.StringVar(value="2.0x")
         self.quality_var = tk.StringVar(value="Balanced")
         self.ai_backend_var = tk.StringVar(value="real_cugan")  # Default to Real-CUGAN
         
@@ -1094,7 +1132,7 @@ class MainGUI:
             ctk.CTkLabel(settings_grid, text="Scale Factor:").grid(row=0, column=0, padx=10, pady=10, sticky="w")
             scale_menu = ctk.CTkComboBox(
                 settings_grid,
-                values=["1.2x", "1.5x", "2.0x", "2.5x", "3.0x", "4.0x"],
+                values=["2.0x", "4.0x", "8.0x"],
                 variable=self.scale_var,
                 state="readonly",
                 width=100
@@ -1223,6 +1261,25 @@ class MainGUI:
                     # Update any UI status if needed
                     if hasattr(self, 'status_label'):
                         self.status_label.configure(text=f"AI Backend: {selected_display}")
+                    # Update system information display with slight delay to ensure backend switch is complete
+                    logger.info(f"=== GUI DEBUG: Attempting to schedule system info update ===")
+                    logger.info(f"Has root attribute: {hasattr(self, 'root')}")
+                    logger.info(f"Root exists: {getattr(self, 'root', None) is not None}")
+                    if hasattr(self, 'root') and self.root:
+                        logger.info("Scheduling system info update in 100ms")
+                        self.root.after(100, self._update_system_info)
+                        # Also try immediate update as backup
+                        try:
+                            self._update_system_info()
+                        except Exception as e:
+                            logger.warning(f"Immediate system info update failed: {e}")
+                    else:
+                        logger.warning("Cannot schedule system info update - root not available")
+                        # Try immediate update as fallback
+                        try:
+                            self._update_system_info()
+                        except Exception as e:
+                            logger.warning(f"Fallback system info update failed: {e}")
                 else:
                     logger.error(f"Failed to switch to backend: {backend_id}")
                     # Revert selection
@@ -1237,15 +1294,15 @@ class MainGUI:
         """Setup system information section"""
         if GUI_AVAILABLE and ctk:
             # CustomTkinter implementation
-            system_frame = ctk.CTkFrame(parent)
-            system_frame.pack(fill="x", padx=10, pady=10)
+            self.system_frame = ctk.CTkFrame(parent)
+            self.system_frame.pack(fill="x", padx=10, pady=10)
             
-            system_label = ctk.CTkLabel(system_frame, text="💻 System Information", font=ctk.CTkFont(size=16, weight="bold"))
+            system_label = ctk.CTkLabel(self.system_frame, text="💻 System Information", font=ctk.CTkFont(size=16, weight="bold"))
             system_label.pack(anchor="w", padx=15, pady=(15, 10))
         else:
             # Standard tkinter fallback  
-            system_frame = ttk.LabelFrame(parent, text="System Information", padding=15)
-            system_frame.pack(fill="x", padx=20, pady=10)
+            self.system_frame = ttk.LabelFrame(parent, text="System Information", padding=15)
+            self.system_frame.pack(fill="x", padx=20, pady=10)
         
         # Get AI backend info
         backend_info = self.ai_processor.get_backend_info()
@@ -1333,8 +1390,13 @@ class MainGUI:
         
         logger.info(f"GPU Mode Active: {gpu_mode_active}, Total GPUs: {total_gpus}, Best Backend: {gpu_summary}")
         
+        # Format AI processor name with version info
+        ai_name = backend_info.get('name', backend_info.get('backend', 'unknown'))
+        ai_version = backend_info.get('version', '')
+        ai_display = f"{ai_name} ({ai_version})" if ai_version else ai_name
+        
         info_text = f"""GPU Backend: {gpu_summary.upper()}
-AI Processor: {backend_info.get('backend', 'unknown')}
+AI Processor: {ai_display}
 GPU Mode: {'Yes' if gpu_mode_active else 'No'}
 Total GPUs: {total_gpus}"""
         
@@ -1359,12 +1421,148 @@ Additional GPUs: +{additional_count} more"""
         
         if GUI_AVAILABLE and ctk:
             # CustomTkinter implementation
-            info_label = ctk.CTkLabel(system_frame, text=info_text, justify="left", anchor="w")
-            info_label.pack(anchor="w", padx=15, pady=(0, 15))
+            self.system_info_label = ctk.CTkLabel(self.system_frame, text=info_text, justify="left", anchor="w")
+            self.system_info_label.pack(anchor="w", padx=15, pady=(0, 15))
         else:
             # Standard tkinter fallback
-            info_label = ttk.Label(system_frame, text=info_text, justify="left")
-            info_label.pack(anchor="w")
+            self.system_info_label = ttk.Label(self.system_frame, text=info_text, justify="left")
+            self.system_info_label.pack(anchor="w")
+        
+        # Update system info for default selection on startup
+        if hasattr(self, 'root') and self.root:
+            self.root.after(100, self._update_system_info)
+    
+    def _update_system_info(self):
+        """Update system information display based on current AI backend"""
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.info("=== _update_system_info called ===")
+        try:
+            # Get current AI backend info
+            backend_info = self.ai_processor.get_backend_info()
+            gpu_summary = self.gpu_info.get('best_backend', 'cpu')
+            
+            # Log backend info for debugging
+            logger.info(f"=== SYSTEM INFO UPDATE ===")
+            logger.info(f"Backend info: {backend_info}")
+            logger.info(f"Current selected backend: {self.ai_processor.selected_backend}")
+            
+            # Count all available GPUs - ensure proper counting
+            total_gpus = 0
+            gpu_names = []
+            all_gpu_details = []
+            
+            # Log GPU info for debugging
+            logger.info(f"Updating system info for backend: {backend_info.get('backend', 'unknown')}")
+            
+            # Count NVIDIA GPUs
+            nvidia_info = self.gpu_info.get('nvidia', {})
+            if nvidia_info.get('available', False):
+                nvidia_gpus = nvidia_info.get('gpus', [])
+                for gpu in nvidia_gpus:
+                    gpu_name = gpu.get('name', 'Unknown NVIDIA')
+                    gpu_names.append(gpu_name)
+                    all_gpu_details.append(f"NVIDIA: {gpu_name}")
+            
+            # Count AMD GPUs
+            amd_info = self.gpu_info.get('amd', {})
+            if amd_info.get('available', False):
+                amd_gpus = amd_info.get('gpus', [])
+                for gpu in amd_gpus:
+                    gpu_name = gpu.get('name', 'Unknown AMD')
+                    gpu_names.append(gpu_name)
+                    all_gpu_details.append(f"AMD: {gpu_name}")
+            
+            # Count Intel GPUs
+            intel_info = self.gpu_info.get('intel', {})
+            if intel_info.get('available', False):
+                intel_gpus = intel_info.get('gpus', [])
+                for gpu in intel_gpus:
+                    gpu_name = gpu.get('name', 'Unknown Intel')
+                    gpu_names.append(gpu_name)
+                    all_gpu_details.append(f"Intel: {gpu_name}")
+            
+            # Count Vulkan devices (include all Vulkan devices that aren't already counted)
+            vulkan_info = self.gpu_info.get('vulkan', {})
+            if vulkan_info.get('available', False):
+                vulkan_devices = vulkan_info.get('devices', [])
+                
+                # Add Vulkan devices that aren't duplicates of already found GPUs
+                for device in vulkan_devices:
+                    device_name = device.get('name', 'Vulkan Device')
+                    
+                    # Check if this device is not already in our list (avoid duplicates)
+                    is_duplicate = False
+                    for existing_name in gpu_names:
+                        if device_name.lower() in existing_name.lower() or existing_name.lower() in device_name.lower():
+                            is_duplicate = True
+                            break
+                    
+                    if not is_duplicate:
+                        gpu_names.append(device_name)
+                        all_gpu_details.append(f"Vulkan: {device_name}")
+            
+            # Set total GPU count
+            total_gpus = len(gpu_names)
+            
+            # Determine if GPU mode is active - more comprehensive check
+            gpu_mode_active = (
+                backend_info.get('gpu_mode', False) or 
+                gpu_summary != 'cpu' or 
+                total_gpus > 0 or
+                nvidia_info.get('available', False) or
+                amd_info.get('available', False) or
+                intel_info.get('available', False) or
+                vulkan_info.get('available', False)
+            )
+            
+            # Format AI processor name with version info
+            ai_name = backend_info.get('name', backend_info.get('backend', 'unknown'))
+            ai_version = backend_info.get('version', '')
+            ai_display = f"{ai_name} ({ai_version})" if ai_version else ai_name
+            
+            info_text = f"""GPU Backend: {gpu_summary.upper()}
+AI Processor: {ai_display}
+GPU Mode: {'Yes' if gpu_mode_active else 'No'}
+Total GPUs: {total_gpus}"""
+            
+            # Add GPU details if available
+            if gpu_names:
+                # Show primary GPU
+                primary_gpu = gpu_names[0][:35] + "..." if len(gpu_names[0]) > 35 else gpu_names[0]
+                info_text += f"""
+Primary GPU: {primary_gpu}"""
+                
+                # Show secondary GPU if available
+                if len(gpu_names) > 1:
+                    secondary_gpu = gpu_names[1][:35] + "..." if len(gpu_names[1]) > 35 else gpu_names[1]
+                    info_text += f"""
+Secondary GPU: {secondary_gpu}"""
+                
+                # Show additional GPUs count if more than 2
+                if len(gpu_names) > 2:
+                    additional_count = len(gpu_names) - 2
+                    info_text += f"""
+Additional GPUs: +{additional_count} more"""
+            
+            # Update the info label text
+            logger.info(f"=== LABEL UPDATE DEBUG ===")
+            logger.info(f"Has system_info_label: {hasattr(self, 'system_info_label')}")
+            logger.info(f"New info_text: {info_text}")
+            
+            if hasattr(self, 'system_info_label'):
+                logger.info("Updating system_info_label with new text")
+                if GUI_AVAILABLE and ctk:
+                    self.system_info_label.configure(text=info_text)
+                    logger.info("Updated CustomTkinter label")
+                else:
+                    self.system_info_label.configure(text=info_text)
+                    logger.info("Updated Tkinter label")
+            else:
+                logger.warning("system_info_label not found - cannot update display")
+                    
+        except Exception as e:
+            logger.error(f"Error updating system info: {e}")
         
     def _setup_processing_section(self, parent):
         """Setup processing section"""
@@ -1543,7 +1741,9 @@ Additional GPUs: +{additional_count} more"""
             
     def _start_processing(self):
         """Start video processing"""
+        logger.info(f"DEBUG: _start_processing called - is_processing: {self.is_processing}")
         if self.is_processing:
+            logger.warning("DEBUG: Processing already in progress, returning early")
             return
             
         input_path = self.input_path_var.get().strip()
@@ -1572,8 +1772,12 @@ Additional GPUs: +{additional_count} more"""
         output_path = str(Path(output_folder) / output_filename)
         
         # Get video info for session creation
+        logger.info(f"DEBUG: Starting video validation for: {input_path}")
         video_info = self.video_processor.validate_video(input_path)
+        logger.info(f"DEBUG: Video validation result: valid={video_info['valid']}, error={video_info.get('error', 'None')}")
+        
         if not video_info['valid']:
+            logger.error(f"DEBUG: Video validation failed: {video_info['error']}")
             if GUI_AVAILABLE and ctk:
                 CTkMessagebox(
                     title="Error",
@@ -1624,17 +1828,26 @@ Additional GPUs: +{additional_count} more"""
                 session_dir = self.session_manager.get_session_dir(self.current_session_id)
                 temp_dir = str(session_dir)
                 
-                # Update video processor temp directory
-                self.video_processor.temp_dir = Path(temp_dir)
-                self.video_processor.frame_dir = self.video_processor.temp_dir / "frames"
-                self.video_processor.frame_dir.mkdir(exist_ok=True)
+                # Update video processor temp directory - ONLY set frame directory, not session directory
+                # This prevents session directory (with progress.json) from being deleted during cleanup
+                session_dir = Path(temp_dir)
+                frame_temp_dir = session_dir / "frames" 
+                frame_temp_dir.mkdir(exist_ok=True)
+                
+                # Set video processor to use ONLY the frames subdirectory as temp_dir
+                self.video_processor.temp_dir = frame_temp_dir
+                self.video_processor.frame_dir = frame_temp_dir
+                
+                logger.info(f"=== SESSION PROTECTION: Video processor temp_dir set to frames subdir: {frame_temp_dir} ===")
+                logger.info(f"Session directory preserved: {session_dir}")
                 
                 # Show progress dialog immediately on GUI thread
                 def create_progress_dialog():
                     nonlocal progress_dialog
                     logger.info("DEBUG: Creating progress dialog...")
-                    progress_dialog = ProgressDialog(self.root, temp_dir=temp_dir)
+                    progress_dialog = ProgressDialog(self.root, temp_dir=str(frame_temp_dir))
                     progress_dialog.video_processor = self.video_processor  # Pass reference for cleanup
+                    progress_dialog.main_gui = self  # Pass main GUI reference for button reset
                     progress_dialog.add_log_message("Initializing video processing...")
                     progress_dialog.update_progress(0, "Starting processing...")
                     logger.info("DEBUG: Progress dialog created and initialized")
@@ -1688,14 +1901,82 @@ Additional GPUs: +{additional_count} more"""
                 # Step 2: Extract frames (check if we can skip or resume)
                 extract_status = progress_data['steps']['extract']['status'] if progress_data else 'pending'
                 
+                # === DEBUG: Extract status check ===
+                logger.info(f"=== EXTRACT STATUS DEBUG ===")
+                logger.info(f"Progress data exists: {progress_data is not None}")
+                logger.info(f"Extract status: {extract_status}")
+                if progress_data:
+                    logger.info(f"Session ID: {progress_data.get('session_id', 'unknown')}")
+                    logger.info(f"All steps: {progress_data.get('steps', {}).keys()}")
+                    extract_data = progress_data.get('steps', {}).get('extract', {})
+                    logger.info(f"Extract step data: {extract_data}")
+                self._safe_gui_update(lambda: progress_dialog.add_log_message(f"DEBUG: Extract status = {extract_status}"))
+                
                 if extract_status == 'completed':
-                    # Skip extraction - already completed
-                    progress_callback(15, "フレーム抽出完了済み（スキップ）")
-                    # Load existing frame paths
-                    frame_paths = sorted([str(p) for p in self.video_processor.frame_dir.glob("frame_*.png")])
-                    self._safe_gui_update(lambda: progress_dialog.add_log_message(f"Loaded {len(frame_paths)} existing frames"))
-                    self._safe_gui_update(lambda: progress_dialog.update_step_progress("extract", 100, "complete"))
-                else:
+                    # Check if frames actually exist before skipping extraction
+                    progress_callback(15, "フレーム抽出完了状態を確認中...")
+                    
+                    # === DEBUG: レジューム時のフレーム読み込み ===
+                    logger.info(f"=== RESUME DEBUG: Loading existing frames ===")
+                    logger.info(f"Video processor frame_dir: {self.video_processor.frame_dir}")
+                    logger.info(f"Session directory: {session_dir}")
+                    
+                    # Load existing frame paths from session frames directory
+                    session_frames_dir = session_dir / "frames"
+                    frame_paths = []
+                    
+                    if session_frames_dir.exists():
+                        frame_paths = sorted([str(p) for p in session_frames_dir.glob("frame_*.png")])
+                        logger.info(f"Found {len(frame_paths)} frames in session frames directory")
+                    else:
+                        # Fallback to video processor frame_dir
+                        frame_paths = sorted([str(p) for p in self.video_processor.frame_dir.glob("frame_*.png")])
+                        logger.info(f"Found {len(frame_paths)} frames in video processor frame_dir (fallback)")
+                    
+                    # === CRITICAL FIX: Check if frames actually exist ===
+                    if len(frame_paths) == 0:
+                        # Check if this is a true resume case or initial processing
+                        progress_data = self.session_manager.load_progress(self.current_session_id)
+                        is_true_resume = progress_data and any(
+                            step.get('status') in ['completed', 'in_progress'] 
+                            for step in progress_data.get('steps', {}).values()
+                        )
+                        
+                        # === ENHANCED DEBUG: More detailed directory inspection ===
+                        logger.warning("=== FRAME DETECTION FAILURE DEBUG ===")
+                        logger.warning(f"Session frames directory: {session_frames_dir}")
+                        logger.warning(f"Session frames directory exists: {session_frames_dir.exists()}")
+                        if session_frames_dir.exists():
+                            all_files = list(session_frames_dir.glob("*"))
+                            logger.warning(f"All files in session frames dir: {[str(f) for f in all_files]}")
+                            png_files = list(session_frames_dir.glob("*.png"))
+                            logger.warning(f"PNG files in session frames dir: {[str(f) for f in png_files]}")
+                        logger.warning(f"Video processor frame_dir: {self.video_processor.frame_dir}")
+                        logger.warning(f"Video processor frame_dir exists: {self.video_processor.frame_dir.exists()}")
+                        if self.video_processor.frame_dir.exists():
+                            vp_files = list(self.video_processor.frame_dir.glob("*"))
+                            logger.warning(f"All files in video processor frame_dir: {[str(f) for f in vp_files]}")
+                        
+                        if is_true_resume:
+                            logger.warning("=== RESUME ISSUE: Extract marked as completed but no frame files found! ===")
+                            logger.warning("Forcing frame re-extraction...")
+                            self._safe_gui_update(lambda: progress_dialog.add_log_message("⚠️ 前回の抽出フレームが見つからないため、フレーム抽出を実行します"))
+                        else:
+                            logger.info("=== INITIAL PROCESSING: Starting frame extraction ===")
+                            self._safe_gui_update(lambda: progress_dialog.add_log_message("フレーム抽出を開始します"))
+                        
+                        # Reset extract status and force re-extraction
+                        self.session_manager.update_step_status(self.current_session_id, "extract", "pending", 0)
+                        
+                        # Force extraction by falling through to extraction logic
+                        extract_status = 'pending'
+                    else:
+                        # Frames exist, can skip extraction
+                        progress_callback(15, "フレーム抽出完了済み（スキップ）")
+                        self._safe_gui_update(lambda: progress_dialog.add_log_message(f"Loaded {len(frame_paths)} existing frames"))
+                        self._safe_gui_update(lambda: progress_dialog.update_step_progress("extract", 100, "complete"))
+                
+                if extract_status != 'completed':
                     # Need to extract frames
                     self._safe_gui_update(lambda: progress_dialog.update_step_progress("extract", 0, "start"))
                     self.session_manager.update_step_status(self.current_session_id, "extract", "in_progress", 0)
@@ -1726,6 +2007,41 @@ Additional GPUs: +{additional_count} more"""
                         self._safe_gui_update(lambda: progress_dialog.update_step_progress("extract", 0, "error"))
                         raise RuntimeError("Failed to extract frames")
                     
+                    # === CRITICAL FIX: Copy frames to session directory for resume functionality ===
+                    session_dir = self.session_manager.get_session_dir(self.current_session_id)
+                    session_frames_dir = session_dir / "frames"
+                    session_frames_dir.mkdir(parents=True, exist_ok=True)
+                    
+                    progress_callback(15.5, "フレームをセッションディレクトリに保存中...")
+                    logger.info(f"=== RESUME FIX: Copying frames to session directory ===")
+                    logger.info(f"Source frames: {len(frame_paths)} files")
+                    logger.info(f"Destination: {session_frames_dir}")
+                    
+                    import shutil
+                    copied_frames = []
+                    for i, frame_path in enumerate(frame_paths):
+                        source_frame = Path(frame_path)
+                        dest_frame = session_frames_dir / source_frame.name
+                        
+                        try:
+                            if not dest_frame.exists():
+                                shutil.copy2(source_frame, dest_frame)
+                                copied_frames.append(str(dest_frame))
+                            else:
+                                copied_frames.append(str(dest_frame))
+                                
+                            if i % 1000 == 0:  # Progress update every 1000 frames
+                                progress_percent = 15.5 + (i / len(frame_paths)) * 0.5
+                                progress_callback(progress_percent, f"フレーム保存中... ({i+1}/{len(frame_paths)})")
+                        except Exception as e:
+                            logger.error(f"Failed to copy frame {source_frame} to session directory: {e}")
+                            # Use original path as fallback
+                            copied_frames.append(frame_path)
+                    
+                    # Update frame_paths to point to session directory
+                    frame_paths = copied_frames
+                    logger.info(f"Successfully copied {len(copied_frames)} frames to session directory")
+                    
                     # Update session with extracted frame count
                     self.session_manager.update_step_status(self.current_session_id, "extract", "completed", 100,
                                                           {"extracted_frames": len(frame_paths)})
@@ -1743,10 +2059,28 @@ Additional GPUs: +{additional_count} more"""
                     # Skip upscaling - already completed
                     progress_callback(85, "AIアップスケーリング完了済み（スキップ）")
                     # Load existing upscaled frames
-                    upscaled_dir = self.video_processor.temp_dir / "upscaled"
+                    session_dir = self.session_manager.get_session_dir(self.current_session_id)
+                    upscaled_dir = session_dir / "upscaled"
                     upscaled_frames = sorted([str(p) for p in upscaled_dir.glob("*_upscaled.png")])
-                    self._safe_gui_update(lambda: progress_dialog.add_log_message(f"Loaded {len(upscaled_frames)} existing upscaled frames"))
-                    self._safe_gui_update(lambda: progress_dialog.update_step_progress("upscale", 100, "complete"))
+                    
+                    # === ENHANCED DEBUG: Check upscaled frames directory ===
+                    if len(upscaled_frames) == 0:
+                        logger.warning("=== UPSCALED FRAME DETECTION FAILURE DEBUG ===")
+                        logger.warning(f"Upscaled directory: {upscaled_dir}")
+                        logger.warning(f"Upscaled directory exists: {upscaled_dir.exists()}")
+                        if upscaled_dir.exists():
+                            all_files = list(upscaled_dir.glob("*"))
+                            logger.warning(f"All files in upscaled dir: {[str(f) for f in all_files]}")
+                            png_files = list(upscaled_dir.glob("*.png"))
+                            logger.warning(f"PNG files in upscaled dir: {[str(f) for f in png_files]}")
+                        logger.warning("Upscale marked as completed but no upscaled files found! Forcing re-upscale...")
+                        self._safe_gui_update(lambda: progress_dialog.add_log_message("⚠️ 前回のアップスケール結果が見つからないため、AI処理を再実行します"))
+                        # Reset upscale status and force re-processing
+                        self.session_manager.update_step_status(self.current_session_id, "upscale", "pending", 0)
+                        upscale_status = 'pending'
+                    else:
+                        self._safe_gui_update(lambda: progress_dialog.add_log_message(f"Loaded {len(upscaled_frames)} existing upscaled frames"))
+                        self._safe_gui_update(lambda: progress_dialog.update_step_progress("upscale", 100, "complete"))
                 else:
                     # Need to upscale frames (with resume)
                     self._safe_gui_update(lambda: progress_dialog.update_step_progress("upscale", 0, "start"))
@@ -1755,6 +2089,13 @@ Additional GPUs: +{additional_count} more"""
                     # Check for existing upscaled frames (resume case)
                     completed_frames = self.session_manager.get_completed_frames(self.current_session_id)
                     remaining_frames = self.session_manager.get_remaining_frames(self.current_session_id, frame_paths)
+                    
+                    # === DEBUG: Resume status ===
+                    logger.info(f"=== AI UPSCALE RESUME DEBUG ===")
+                    logger.info(f"Total frames to process: {len(frame_paths)}")
+                    logger.info(f"Completed frames: {len(completed_frames)}")
+                    logger.info(f"Remaining frames: {len(remaining_frames)}")
+                    self._safe_gui_update(lambda: progress_dialog.add_log_message(f"DEBUG: 完了済み {len(completed_frames)}フレーム、残り {len(remaining_frames)}フレーム"))
                     
                     if completed_frames:
                         progress_callback(20, f"AIアップスケーリング再開中... ({len(completed_frames)}/{len(frame_paths)} 完了済み)")
@@ -1783,14 +2124,18 @@ Additional GPUs: +{additional_count} more"""
                     
                     # Process remaining frames only
                     if remaining_frames:
+                        # Continue processing remaining frames
+                        self._safe_gui_update(lambda: progress_dialog.add_log_message(f"処理継続: 残り{len(remaining_frames)}フレーム"))
                         upscaled_frames = self._upscale_frames_with_resume(
                             remaining_frames, completed_frames, scale_factor, 
                             upscale_progress_callback, progress_dialog
                         )
                     else:
-                        # All frames already completed
-                        upscaled_dir = self.video_processor.temp_dir / "upscaled"
+                        # All frames already completed - get all upscaled frames
+                        session_dir = self.session_manager.get_session_dir(self.current_session_id)
+                        upscaled_dir = session_dir / "upscaled"
                         upscaled_frames = sorted([str(p) for p in upscaled_dir.glob("*_upscaled.png")])
+                        self._safe_gui_update(lambda: progress_dialog.add_log_message(f"全フレーム処理済み: {len(upscaled_frames)}フレーム"))
                     
                     if not upscaled_frames:
                         self.session_manager.update_step_status(self.current_session_id, "upscale", "failed", 0,
@@ -1872,14 +2217,23 @@ Additional GPUs: +{additional_count} more"""
         if self.current_session_id:
             self.session_manager.update_step_status(self.current_session_id, "combine", "completed", 100,
                                                   {"output_path": output_path})
+        
+        # === FIXED: Full cleanup on successful completion (no need to preserve frames) ===
+        logger.info("DEBUG: Processing completed successfully, performing full cleanup")
+        try:
+            if self.video_processor:
+                self.video_processor.cleanup(preserve_frames=False)
+                logger.info("DEBUG: Full cleanup completed - all temp files removed")
+        except Exception as e:
+            logger.warning(f"DEBUG: Error during completion cleanup: {e}")
             
             # Clean up session after successful completion
             self.session_manager.cleanup_session(self.current_session_id)
             self.current_session_id = None
             logger.info("Session completed successfully and cleaned up")
         
-        # Clean up temporary files before closing dialog
-        progress_dialog._cleanup_temp_files()
+        # Clean up temporary files completely after successful completion
+        progress_dialog._cleanup_temp_files(preserve_frames=False)
         progress_dialog.destroy()
         
         self.is_processing = False
@@ -1901,18 +2255,25 @@ Additional GPUs: +{additional_count} more"""
         
     def _on_processing_error(self, error_msg, progress_dialog):
         """Handle processing error"""
-        # Save session state for potential resume (don't clean up on error)
+        # Save session state for potential resume (don't clean up on error/cancellation)
         if self.current_session_id:
             # Update session with error info but keep it for resume
-            current_step = self.session_manager._get_current_step(
-                self.session_manager.load_progress(self.current_session_id).get('steps', {})
-            )
-            self.session_manager.update_step_status(self.current_session_id, current_step, "failed", 0,
-                                                  {"error": str(error_msg)})
-            logger.info(f"Session {self.current_session_id} saved for potential resume after error")
+            progress_data = self.session_manager.load_progress(self.current_session_id)
+            if progress_data:
+                current_step = self.session_manager._get_current_step(progress_data.get('steps', {}))
+                
+                # Determine if this is a cancellation or error
+                is_cancellation = "cancelled" in str(error_msg).lower()
+                status = "cancelled" if is_cancellation else "failed"
+                
+                self.session_manager.update_step_status(self.current_session_id, current_step, status, 0,
+                                                      {"error": str(error_msg)})
+                logger.info(f"Session {self.current_session_id} saved for potential resume after {status}")
+            else:
+                logger.warning(f"Could not save session state - no progress data found for {self.current_session_id}")
         
-        # Clean up temporary files before closing dialog
-        progress_dialog._cleanup_temp_files()
+        # Clean up temporary files (preserve frames for resume on error)
+        progress_dialog._cleanup_temp_files(preserve_frames=True)
         progress_dialog.destroy()
         
         self.is_processing = False
@@ -1935,6 +2296,15 @@ Additional GPUs: +{additional_count} more"""
         
         self._add_status_message(f"Processing failed: {error_msg}")
         
+    def _reset_processing_state(self):
+        """Reset processing state when cancelled"""
+        self.is_processing = False
+        if GUI_AVAILABLE and ctk:
+            self.process_button.configure(text="Start Processing", state="normal")
+        else:
+            self.process_button.config(text="Start Processing", state="normal")
+        self._add_status_message("Processing cancelled by user")
+    
     def __del__(self):
         """Destructor to ensure cleanup on application exit"""
         try:
@@ -1943,7 +2313,7 @@ Additional GPUs: +{additional_count} more"""
                 self.session_manager.cleanup_old_sessions()
             
             if hasattr(self, 'video_processor') and self.video_processor:
-                self.video_processor.cleanup()
+                self.video_processor.cleanup(preserve_frames=True)
         except:
             pass
         
@@ -1970,7 +2340,7 @@ Additional GPUs: +{additional_count} more"""
             
             # Stop any running threads/processes
             if hasattr(self, 'video_processor') and self.video_processor:
-                self.video_processor.cleanup()
+                self.video_processor.cleanup(preserve_frames=True)
             
             # Destroy GUI safely
             if self.root:
@@ -2095,6 +2465,11 @@ Additional GPUs: +{additional_count} more"""
                     self.current_session_id = resumable_session['session_id']
                     self._add_status_message("前回のセッションから再開準備完了")
                     logger.info(f"User chose to resume session {self.current_session_id}")
+                    
+                    # === FIXED: 自動的に処理を開始 ===
+                    logger.info("Starting processing automatically after resume selection")
+                    # レジューム選択直後に処理を開始
+                    self._start_processing()
                 elif choice == "restart":
                     # Clean up old session
                     self.session_manager.cleanup_session(resumable_session['session_id'])
@@ -2140,9 +2515,32 @@ Additional GPUs: +{additional_count} more"""
                 remaining_frames, scale_factor, resume_progress_callback, progress_dialog
             )
             
-            # Combine with existing completed frames
-            upscaled_dir = self.video_processor.temp_dir / "upscaled"
-            existing_upscaled = [str(p) for p in upscaled_dir.glob("*_upscaled.png")]
+            # === DEBUG: フレーム収集開始時の詳細情報 ===
+            logger.info(f"=== FRAME COLLECTION DEBUG START ===")
+            
+            # Get completed frames from session management
+            session_completed_frames = self.session_manager.get_completed_frames(self.current_session_id)
+            logger.info(f"Session completed frames count: {len(session_completed_frames)}")
+            
+            # Also get frames from directory for verification
+            session_dir = self.session_manager.get_session_dir(self.current_session_id)
+            upscaled_dir = session_dir / "upscaled"
+            directory_frames = [str(p) for p in upscaled_dir.glob("*_upscaled.png")]
+            logger.info(f"Directory frames count: {len(directory_frames)}")
+            
+            # Use session management frames if available, otherwise fallback to directory scan
+            if session_completed_frames:
+                existing_upscaled = session_completed_frames
+                logger.info(f"Using session management frames: {len(existing_upscaled)} frames")
+            else:
+                existing_upscaled = directory_frames
+                logger.info(f"Fallback to directory scan: {len(existing_upscaled)} frames")
+            
+            # === DEBUG: 最終フレーム情報 ===
+            if existing_upscaled:
+                logger.info(f"First frame: {existing_upscaled[0] if existing_upscaled else 'None'}")
+                logger.info(f"Last frame: {existing_upscaled[-1] if existing_upscaled else 'None'}")
+                logger.info(f"Total frames returning: {len(existing_upscaled)}")
             
             return sorted(existing_upscaled)
             
@@ -2153,7 +2551,8 @@ Additional GPUs: +{additional_count} more"""
     def _upscale_with_tracking(self, frame_paths: List[str], scale_factor: float, 
                               progress_callback: Callable, progress_dialog) -> List[str]:
         """Upscale frames with individual frame tracking for resume using parallel processing"""
-        output_dir = str(self.video_processor.temp_dir / "upscaled")
+        session_dir = self.session_manager.get_session_dir(self.current_session_id)
+        output_dir = str(session_dir / "upscaled")
         Path(output_dir).mkdir(parents=True, exist_ok=True)
         
         # Filter out already processed frames for efficiency
@@ -2187,10 +2586,31 @@ Additional GPUs: +{additional_count} more"""
                 tracking_progress_callback, progress_dialog
             )
             
-            # Add completed frames to session tracking
-            for frame_path in upscaled_frames:
-                self.session_manager.add_completed_frame(self.current_session_id, frame_path)
-                processed_frames.append(frame_path)
+            # === DEBUG: 並列処理結果の確認 ===
+            logger.info(f"Parallel processing returned {len(upscaled_frames)} frames")
+            
+            # Add completed frames to session tracking - use directory scan to ensure all frames are captured
+            output_path = Path(output_dir)
+            all_output_files = list(output_path.glob("*_upscaled.png"))
+            logger.info(f"Directory contains {len(all_output_files)} upscaled files")
+            
+            # Add all files found in directory to session management
+            logger.info(f"=== GUI DEBUG: Processing {len(all_output_files)} files for session management ===")
+            added_count = 0
+            for i, file_path in enumerate(all_output_files):
+                full_path = str(file_path.absolute())
+                
+                # Debug log every 100th frame or first 5 frames
+                if i < 5 or i % 100 == 0:
+                    logger.info(f"Adding frame {i+1}/{len(all_output_files)}: {full_path}")
+                
+                self.session_manager.add_completed_frame(self.current_session_id, full_path)
+                added_count += 1
+                
+                if full_path not in processed_frames:
+                    processed_frames.append(full_path)
+            
+            logger.info(f"=== GUI DEBUG: Completed adding {added_count} frames to session management ===")
             
             return processed_frames
             

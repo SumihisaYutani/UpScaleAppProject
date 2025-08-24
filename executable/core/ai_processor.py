@@ -46,15 +46,19 @@ class AIProcessor:
         # Set best backend (for compatibility)
         self.best_backend = self.gpu_info.get('best_backend', 'cpu')
         
-        # Set backend based on preference or first available
+        # Set backend based on preference or priority order
         if preferred_backend and preferred_backend in self.available_backends:
             self.selected_backend = preferred_backend
         else:
-            # Select first available backend (no automatic fallback)
-            available_backend_list = list(self.available_backends.keys())
-            if available_backend_list:
-                self.selected_backend = available_backend_list[0]
-            else:
+            # Priority order: Real-CUGAN first, then others
+            priority_order = ['real_cugan', 'waifu2x_executable', 'waifu2x_python', 'simple']
+            self.selected_backend = None
+            for backend in priority_order:
+                if backend in self.available_backends:
+                    self.selected_backend = backend
+                    break
+            
+            if not self.selected_backend:
                 raise RuntimeError("No AI backends available")
         
         # Initialize backend
@@ -79,8 +83,13 @@ class AIProcessor:
                     'gpu_support': True,
                     'recommended_for': 'Anime/Illustration'
                 }
+                logger.info("Real-CUGAN backend successfully added")
+            else:
+                logger.warning("Real-CUGAN backend not available - backend check failed")
+        except ImportError as e:
+            logger.warning(f"Real-CUGAN backend module import failed: {e}")
         except Exception as e:
-            logger.warning(f"Real-CUGAN backend not available: {e}")
+            logger.error(f"Real-CUGAN backend initialization error: {e}", exc_info=True)
         
         # Check Waifu2x Python library availability
         if WAIFU2X_NCNN_PY_AVAILABLE:
@@ -93,8 +102,13 @@ class AIProcessor:
                         'gpu_support': True,
                         'recommended_for': 'General/Fast processing'
                     }
+                    logger.info("Waifu2x Python backend successfully added")
+                else:
+                    logger.warning("Waifu2x Python backend not available - backend check failed")
             except Exception as e:
-                logger.warning(f"Waifu2x Python backend not available: {e}")
+                logger.error(f"Waifu2x Python backend initialization error: {e}", exc_info=True)
+        else:
+            logger.warning("waifu2x_ncnn_py library not available - backend skipped")
         
         # Check Waifu2x executable availability
         try:
@@ -106,8 +120,11 @@ class AIProcessor:
                     'gpu_support': True,
                     'recommended_for': 'Compatibility'
                 }
+                logger.info("Waifu2x executable backend successfully added")
+            else:
+                logger.warning("Waifu2x executable backend not available - backend check failed")
         except Exception as e:
-            logger.warning(f"Waifu2x executable backend not available: {e}")
+            logger.error(f"Waifu2x executable backend initialization error: {e}", exc_info=True)
         
         # Simple upscaling is always available
         backends['simple'] = {
@@ -147,47 +164,63 @@ class AIProcessor:
     def _initialize_backend(self):
         """Initialize the selected AI backend without fallback"""
         try:
-            logger.info(f"Initializing selected backend: {self.selected_backend}")
+            logger.info(f"=== AI BACKEND INITIALIZATION DEBUG ===")
+            logger.info(f"Selected backend: {self.selected_backend}")
+            logger.info(f"Available backends: {list(self.available_backends.keys())}")
+            logger.info(f"GPU info available: {self.gpu_info is not None}")
             
             if self.selected_backend == 'real_cugan':
-                logger.info("Initializing Real-CUGAN backend")
+                logger.info("Attempting Real-CUGAN backend initialization...")
                 from .real_cugan_backend import RealCUGANBackend
                 self.backend = RealCUGANBackend(self.resource_manager, self.gpu_info)
+                logger.info("Real-CUGAN backend object created")
                 
             elif self.selected_backend == 'waifu2x_python':
-                logger.info("Initializing Waifu2x Python backend")
+                logger.info("Attempting Waifu2x Python backend initialization...")
                 self.backend = Waifu2xPythonBackend(self.gpu_info)
+                logger.info("Waifu2x Python backend object created")
                 
             elif self.selected_backend == 'waifu2x_executable':
-                logger.info("Initializing Waifu2x Executable backend")
+                logger.info("Attempting Waifu2x Executable backend initialization...")
                 self.backend = Waifu2xExecutableBackend(self.resource_manager, self.gpu_info)
+                logger.info("Waifu2x Executable backend object created")
                 
             elif self.selected_backend == 'simple':
-                logger.info("Initializing Simple Upscaling backend")
+                logger.info("Attempting Simple Upscaling backend initialization...")
                 self.backend = SimpleUpscalingBackend()
+                logger.info("Simple backend object created")
                 
             else:
                 logger.error(f"Unknown backend: {self.selected_backend}")
+                logger.error(f"Available options: {list(self.available_backends.keys())}")
                 raise RuntimeError(f"Unknown backend: {self.selected_backend}")
             
             # Verify backend is available
-            if not self.backend or not self.backend.is_available():
+            logger.info("Checking backend availability...")
+            if not self.backend:
+                logger.error("Backend object is None!")
+                raise RuntimeError(f"Backend '{self.selected_backend}' object creation failed")
+            
+            is_available = self.backend.is_available()
+            logger.info(f"Backend availability check result: {is_available}")
+            
+            if not is_available:
+                logger.error(f"Backend '{self.selected_backend}' is not available")
                 raise RuntimeError(f"Backend '{self.selected_backend}' is not available")
             
             logger.info(f"Backend '{self.selected_backend}' initialized successfully: {type(self.backend).__name__}")
             
             # Initialize parallel processor for all backends
             if self.use_parallel_processing:
+                logger.info("Initializing parallel processor...")
                 self.parallel_processor = OptimizedParallelProcessor(self)
                 logger.info(f"Parallel processing enabled for {self.selected_backend} backend")
-            
-            return
+            else:
+                logger.info("Parallel processing disabled for this session")
                 
         except Exception as e:
-            logger.error(f"Failed to initialize AI backend '{self.selected_backend}': {e}")
-            import traceback
-            traceback.print_exc()
-            raise RuntimeError(f"Backend '{self.selected_backend}' initialization failed: {e}")
+            logger.error(f"Backend initialization failed: {e}", exc_info=True)
+            self.backend = None
     
     def upscale_frames(self, frame_paths: List[str], output_dir: str, 
                       scale_factor: float = 2.0,
@@ -668,6 +701,8 @@ class Waifu2xExecutableBackend:
     def get_info(self) -> Dict[str, Any]:
         """Get backend information"""
         return {
+            "name": "Waifu2x Executable",
+            "version": "NCNN-Vulkan",
             "backend": "waifu2x_executable",
             "available": self.is_available(),
             "executable_path": self.waifu2x_path,
@@ -754,6 +789,8 @@ class SimpleUpscalingBackend:
     def get_info(self) -> Dict[str, Any]:
         """Get backend information"""
         return {
+            "name": "Simple Upscaling",
+            "version": "PIL LANCZOS",
             "backend": "simple_upscaling",
             "available": True,
             "method": "PIL Lanczos",
@@ -876,6 +913,8 @@ class Waifu2xPythonBackend:
     def get_info(self) -> Dict[str, Any]:
         """Get backend information"""
         return {
+            "name": "Waifu2x Python",
+            "version": "NCNN-GPU",
             "backend": "waifu2x_ncnn_py",
             "available": self.is_available(),
             "gpu_id": self.gpu_id,

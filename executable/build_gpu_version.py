@@ -25,7 +25,11 @@ def main():
     dist_dir = project_root / "dist"
     if dist_dir.exists():
         print("Cleaning existing dist directory...")
-        shutil.rmtree(dist_dir)
+        try:
+            shutil.rmtree(dist_dir)
+        except PermissionError:
+            print("Permission error, trying to force delete...")
+            subprocess.run(f'rmdir /S /Q "{dist_dir}"', shell=True, check=False)
     
     # buildディレクトリをクリーンアップ
     build_dir = project_root / "build"
@@ -39,7 +43,7 @@ def main():
         "--onefile",                    # 単一実行ファイル形式
         "--windowed",                   # GUIアプリケーション
         "--noupx",                      # UPX圧縮を無効化
-        "--add-data", "D:\\ClaudeCode\\project\\UpScaleAppProject\\executable\\resources;resources", # リソースファイルを含める
+        "--add-data", "resources;resources", # リソースファイルを含める（相対パス）
         "--collect-submodules", "waifu2x_ncnn_py", # waifu2xのサブモジュールを含める
         "--collect-data", "waifu2x_ncnn_py", # waifu2xのデータファイル（モデル）を含める
         "--copy-metadata", "torch",     # PyTorchメタデータを含める
@@ -75,6 +79,14 @@ def main():
         "--hidden-import", "accelerate",
         "--hidden-import", "numpy",
         "--hidden-import", "tqdm",
+        # Real-CUGAN関連の依存関係
+        "--hidden-import", "basicsr",
+        "--hidden-import", "realesrgan",
+        "--hidden-import", "facexlib",
+        "--hidden-import", "gfpgan",
+        # GPU処理関連
+        "--hidden-import", "pyopencl",
+        "--hidden-import", "pycuda",
         str(main_script)
     ]
     
@@ -82,11 +94,29 @@ def main():
     print(f"Command: {' '.join(cmd)}")
     
     try:
-        result = subprocess.run(cmd, check=True, capture_output=True, text=True)
-        print("BUILD SUCCESS!")
+        # ビルド処理は時間がかかるため、タイムアウトを20分に設定し、リアルタイム出力を有効化
+        print("Starting PyInstaller build (this may take 10-15 minutes)...")
+        print("=" * 60)
         
-        # 単一ファイル形式の実行ファイルの場所を確認
-        exe_path = dist_dir / "UpScaleApp_GPU.exe"
+        # リアルタイム出力でビルド進行状況を表示
+        process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, 
+                                 text=True, universal_newlines=True)
+        
+        # 出力をリアルタイムで表示
+        for line in process.stdout:
+            print(line.rstrip())
+        
+        # プロセス完了を待機
+        process.wait(timeout=1200)
+        
+        if process.returncode == 0:
+            print("BUILD SUCCESS!")
+        else:
+            print(f"BUILD FAILED with return code: {process.returncode}")
+            return False
+        
+        # 単一ファイル形式の実行ファイルの場所を確認（BUILD_INFO.mdの要求に従う）
+        exe_path = project_root / "dist" / "UpScaleApp_GPU.exe"
         if exe_path.exists():
             print(f"Executable created: {exe_path}")
             print(f"File size: {exe_path.stat().st_size / 1024 / 1024:.2f} MB")

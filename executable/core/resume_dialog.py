@@ -40,8 +40,8 @@ class ResumeDialog:
         """Show CustomTkinter resume dialog"""
         self.dialog = ctk.CTkToplevel(self.parent)
         self.dialog.title("処理の再開")
-        self.dialog.geometry("600x500")
-        self.dialog.resizable(False, False)
+        self.dialog.geometry("700x800")
+        self.dialog.resizable(True, True)
         
         # Make modal
         self.dialog.transient(self.parent)
@@ -49,8 +49,8 @@ class ResumeDialog:
         
         # Center on parent
         self.parent.update_idletasks()
-        x = (self.parent.winfo_x() + self.parent.winfo_width() // 2) - 300
-        y = (self.parent.winfo_y() + self.parent.winfo_height() // 2) - 250
+        x = (self.parent.winfo_x() + self.parent.winfo_width() // 2) - 350
+        y = (self.parent.winfo_y() + self.parent.winfo_height() // 2) - 400
         self.dialog.geometry(f"+{x}+{y}")
         
         self._setup_ctk_content()
@@ -63,8 +63,8 @@ class ResumeDialog:
         """Show standard Tkinter resume dialog"""
         self.dialog = tk.Toplevel(self.parent)
         self.dialog.title("処理の再開")
-        self.dialog.geometry("600x500")
-        self.dialog.resizable(False, False)
+        self.dialog.geometry("700x800")
+        self.dialog.resizable(True, True)
         
         # Make modal
         self.dialog.transient(self.parent)
@@ -72,8 +72,8 @@ class ResumeDialog:
         
         # Center on parent
         self.parent.update_idletasks()
-        x = self.parent.winfo_x() + (self.parent.winfo_width() // 2) - 300
-        y = self.parent.winfo_y() + (self.parent.winfo_height() // 2) - 250
+        x = self.parent.winfo_x() + (self.parent.winfo_width() // 2) - 350
+        y = self.parent.winfo_y() + (self.parent.winfo_height() // 2) - 400
         self.dialog.geometry(f"+{x}+{y}")
         
         self._setup_tk_content()
@@ -84,9 +84,12 @@ class ResumeDialog:
     
     def _setup_ctk_content(self):
         """Setup CustomTkinter dialog content"""
-        # Main frame
-        main_frame = ctk.CTkFrame(self.dialog)
-        main_frame.pack(fill="both", expand=True, padx=20, pady=20)
+        # Create scrollable frame
+        scrollable_frame = ctk.CTkScrollableFrame(self.dialog)
+        scrollable_frame.pack(fill="both", expand=True, padx=20, pady=20)
+        
+        # Main content frame inside scrollable frame
+        main_frame = scrollable_frame
         
         # Title
         title_label = ctk.CTkLabel(
@@ -129,7 +132,7 @@ class ResumeDialog:
         
         # Button frame
         button_frame = ctk.CTkFrame(options_frame)
-        button_frame.pack(fill="x", padx=10, pady=(0, 15))
+        button_frame.pack(fill="x", padx=10, pady=(10, 20))
         
         # Resume button
         resume_btn = ctk.CTkButton(
@@ -167,9 +170,24 @@ class ResumeDialog:
     
     def _setup_tk_content(self):
         """Setup standard Tkinter dialog content"""
-        # Main frame
-        main_frame = ttk.Frame(self.dialog)
-        main_frame.pack(fill="both", expand=True, padx=20, pady=20)
+        # Create canvas and scrollbar for scrolling
+        canvas = tk.Canvas(self.dialog)
+        scrollbar = ttk.Scrollbar(self.dialog, orient="vertical", command=canvas.yview)
+        scrollable_frame = ttk.Frame(canvas)
+        
+        scrollable_frame.bind(
+            "<Configure>",
+            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+        )
+        
+        canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+        
+        canvas.pack(side="left", fill="both", expand=True, padx=(20, 0), pady=20)
+        scrollbar.pack(side="right", fill="y", padx=(0, 20), pady=20)
+        
+        # Main content frame
+        main_frame = scrollable_frame
         
         # Title
         title_label = ttk.Label(
@@ -193,7 +211,7 @@ class ResumeDialog:
         
         # Buttons
         button_frame = ttk.Frame(main_frame)
-        button_frame.pack(fill="x", pady=(10, 0))
+        button_frame.pack(fill="x", pady=(20, 20))
         
         ttk.Button(
             button_frame,
