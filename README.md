@@ -465,6 +465,16 @@ python test_environment.py
 
 ## 📋 更新履歴
 
+### v2.2.2 (2025-08-26) - 重要なバグ修正とwaifu2x完全対応 🔧
+- 🚀 **waifu2x Executable完全修正** - models-cunetモデルパッケージング完了
+- 🎯 **バックエンド選択修正** - GUI変数同期問題解決（args優先取得実装）  
+- ⚡ **フレーム抽出改善** - 単一パスFFmpeg実装によりバッチ処理エラー解決
+- 📊 **表示修正** - 残りフレーム数の正確な計算と表示一貫性確保
+- 🔄 **セッションクリーンアップ強化** - 完了済みセッション自動検出・削除機能
+- 📦 **完全版実行ファイル** - 576.51MB waifu2x完全対応版（models-cunet統合）
+- 🎨 **処理安定性向上** - フォールバック問題解決、全2013フレーム正常処理確認
+- 🔧 **デバッグ強化** - 詳細ログとトラブルシューティング情報追加
+
 ### v2.2.1 (2025-08-24) - Real-CUGAN GPU加速完全統合 🎯
 - 🎨 **Real-CUGAN統合** - anime/illustration特化AI超解像（NCNN-Vulkan）
 - ⚡ **AMD Vulkan GPU加速** - Radeon RX Vega 56 GPU加速動作確認済み
@@ -500,6 +510,6 @@ python test_environment.py
 ---
 
 **作成者**: SumihisaYutani  
-**バージョン**: 2.2.1 - Real-CUGAN GPU加速完全統合版  
-**最終更新**: 2025-08-24  
-**最新成果**: Real-CUGAN Vulkan GPU加速・AMD Radeon RX Vega対応・481MB完全統合実行ファイル・配布準備完了
+**バージョン**: 2.2.2 - waifu2x完全対応・重要バグ修正版  
+**最終更新**: 2025-08-26  
+**最新成果**: waifu2x Executable完全修正・バックエンド選択修正・576.51MB完全統合実行ファイル・全問題解決

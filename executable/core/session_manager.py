@@ -393,7 +393,23 @@ class SessionManager:
     def get_remaining_frames(self, session_id: str, all_frames: List[str]) -> List[str]:
         """Get list of frames that still need processing"""
         completed_frames = set(self.get_completed_frames(session_id))
-        return [frame for frame in all_frames if frame not in completed_frames]
+        
+        # Normalize paths for comparison
+        completed_frames_normalized = {os.path.normpath(frame) for frame in completed_frames}
+        
+        remaining = []
+        for frame in all_frames:
+            # Check if upscaled version exists
+            frame_path = Path(frame)
+            upscaled_path = self.sessions_dir / session_id / "upscaled" / f"{frame_path.stem}_upscaled{frame_path.suffix}"
+            
+            # Use both path-based and file existence checks
+            if (os.path.normpath(str(upscaled_path)) not in completed_frames_normalized and 
+                not upscaled_path.exists()):
+                remaining.append(frame)
+        
+        logger.debug(f"get_remaining_frames: {len(completed_frames)} completed, {len(all_frames)} total, {len(remaining)} remaining")
+        return remaining
     
     def cleanup_session(self, session_id: str) -> None:
         """Clean up session directory and files"""
@@ -406,7 +422,7 @@ class SessionManager:
             logger.warning(f"Failed to cleanup session {session_id}: {e}")
     
     def cleanup_old_sessions(self, max_age_days: int = 7) -> None:
-        """Clean up sessions older than specified days"""
+        """Clean up sessions older than specified days and completed sessions"""
         try:
             cutoff_time = datetime.now() - timedelta(days=max_age_days)
             cleaned_count = 0
@@ -415,20 +431,75 @@ class SessionManager:
                 if not session_dir.is_dir():
                     continue
                 
-                progress_data = self.load_progress(session_dir.name)
+                session_id = session_dir.name
+                progress_data = self.load_progress(session_id)
                 if not progress_data:
+                    logger.info(f"Cleaning up session with no progress data: {session_id}")
+                    self.cleanup_session(session_id)
+                    cleaned_count += 1
                     continue
                 
-                last_updated = datetime.fromisoformat(progress_data.get('last_updated', ''))
-                if last_updated < cutoff_time:
-                    self.cleanup_session(session_dir.name)
+                should_cleanup = False
+                cleanup_reason = ""
+                
+                # Check if session is old
+                try:
+                    last_updated = datetime.fromisoformat(progress_data.get('last_updated', ''))
+                    if last_updated < cutoff_time:
+                        should_cleanup = True
+                        cleanup_reason = f"older than {max_age_days} days"
+                except:
+                    # If timestamp parsing fails, consider it old
+                    should_cleanup = True
+                    cleanup_reason = "invalid timestamp"
+                
+                # Check if session is actually completed
+                if not should_cleanup and self._is_session_completed(session_id):
+                    should_cleanup = True
+                    cleanup_reason = "completed with output video"
+                
+                if should_cleanup:
+                    logger.info(f"Cleaning up session {session_id}: {cleanup_reason}")
+                    self.cleanup_session(session_id)
                     cleaned_count += 1
             
             if cleaned_count > 0:
-                logger.info(f"Cleaned up {cleaned_count} old sessions")
+                logger.info(f"Cleaned up {cleaned_count} sessions")
                 
         except Exception as e:
             logger.warning(f"Error cleaning up old sessions: {e}")
+    
+    def _is_session_completed(self, session_id: str) -> bool:
+        """Check if a session is actually completed by looking for output files"""
+        try:
+            progress_data = self.load_progress(session_id)
+            if not progress_data:
+                return False
+            
+            # Check if combine step is completed
+            combine_step = progress_data.get('steps', {}).get('combine', {})
+            if combine_step.get('status') == 'completed':
+                logger.info(f"Session {session_id} marked as completed via combine step")
+                return True
+            
+            # Alternative: Check if output video file exists
+            video_file = progress_data.get('video_file', '')
+            if video_file:
+                # Look for output file in common output locations
+                video_path = Path(video_file)
+                output_name = f"{video_path.stem}_upscaled{video_path.suffix}"
+                
+                # Check in same directory as input
+                output_path = video_path.parent / output_name
+                if output_path.exists() and output_path.stat().st_size > 1024:  # At least 1KB
+                    logger.info(f"Found output video for session {session_id}: {output_path}")
+                    return True
+            
+            return False
+            
+        except Exception as e:
+            logger.warning(f"Error checking completion status for session {session_id}: {e}")
+            return False
     
     def get_session_summary(self, session_id: str) -> Dict[str, Any]:
         """Get summary information about a session for UI display"""

@@ -1155,6 +1155,10 @@ class MainGUI:
             
             # Get available backends for combobox
             available_backends = self.ai_processor.get_available_backends()
+            logger.info(f"=== GUI BACKEND INITIALIZATION DEBUG (CTK) ===")
+            logger.info(f"Available backends from AI processor: {list(available_backends.keys())}")
+            logger.info(f"Backend details: {available_backends}")
+            
             backend_options = []
             backend_descriptions = {}
             
@@ -1166,8 +1170,11 @@ class MainGUI:
                     display_name += " (CPU)"
                 backend_options.append(display_name)
                 backend_descriptions[display_name] = backend_id
+                logger.info(f"Mapped: '{display_name}' -> '{backend_id}' (name: {backend_info['name']}, gpu: {backend_info.get('gpu_support')})")
             
             self.backend_descriptions = backend_descriptions
+            logger.info(f"Final backend_descriptions: {backend_descriptions}")
+            logger.info(f"Final backend_options: {backend_options}")
             
             self.ai_backend_menu = ctk.CTkComboBox(
                 settings_grid,
@@ -1180,10 +1187,22 @@ class MainGUI:
             self.ai_backend_menu.grid(row=1, column=1, columnspan=2, padx=10, pady=10, sticky="w")
             
             # Set default backend display
+            logger.info(f"Setting default backend display (CTK)...")
+            default_set = False
             for display_name, backend_id in self.backend_descriptions.items():
+                logger.info(f"Checking backend: '{backend_id}' (display: '{display_name}')")
                 if backend_id == 'real_cugan':
+                    logger.info(f"Setting default backend to Real-CUGAN: '{display_name}'")
                     self.ai_backend_var.set(display_name)
+                    default_set = True
                     break
+            if not default_set:
+                logger.warning("Real-CUGAN not found, using first available backend")
+                if self.backend_descriptions:
+                    first_display = list(self.backend_descriptions.keys())[0]
+                    first_backend = self.backend_descriptions[first_display]
+                    logger.info(f"Setting first available backend: '{first_backend}' (display: '{first_display}')")
+                    self.ai_backend_var.set(first_display)
         else:
             # Standard tkinter fallback
             settings_frame = ttk.LabelFrame(parent, text="Processing Settings", padding=15)
@@ -1216,6 +1235,10 @@ class MainGUI:
             
             # Get available backends for combobox
             available_backends = self.ai_processor.get_available_backends()
+            logger.info(f"=== GUI BACKEND INITIALIZATION DEBUG (TTK) ===")
+            logger.info(f"Available backends from AI processor: {list(available_backends.keys())}")
+            logger.info(f"Backend details: {available_backends}")
+            
             backend_options = []
             backend_descriptions = {}
             
@@ -1227,8 +1250,11 @@ class MainGUI:
                     display_name += " (CPU)"
                 backend_options.append(display_name)
                 backend_descriptions[display_name] = backend_id
+                logger.info(f"Mapped: '{display_name}' -> '{backend_id}' (name: {backend_info['name']}, gpu: {backend_info.get('gpu_support')})")
             
             self.backend_descriptions = backend_descriptions
+            logger.info(f"Final backend_descriptions: {backend_descriptions}")
+            logger.info(f"Final backend_options: {backend_options}")
             
             self.ai_backend_combo = ttk.Combobox(
                 settings_frame,
@@ -1241,21 +1267,58 @@ class MainGUI:
             self.ai_backend_combo.bind('<<ComboboxSelected>>', self._on_backend_change)
             
             # Set default backend display
+            logger.info(f"Setting default backend display (TTK)...")
+            default_set = False
             for display_name, backend_id in self.backend_descriptions.items():
+                logger.info(f"Checking backend: '{backend_id}' (display: '{display_name}')")
                 if backend_id == 'real_cugan':
+                    logger.info(f"Setting default backend to Real-CUGAN: '{display_name}'")
                     self.ai_backend_var.set(display_name)
+                    default_set = True
                     break
+            if not default_set:
+                logger.warning("Real-CUGAN not found, using first available backend")
+                if self.backend_descriptions:
+                    first_display = list(self.backend_descriptions.keys())[0]
+                    first_backend = self.backend_descriptions[first_display]
+                    logger.info(f"Setting first available backend: '{first_backend}' (display: '{first_display}')")
+                    self.ai_backend_var.set(first_display)
     
     def _on_backend_change(self, *args):
         """Handle AI backend selection change"""
         try:
-            selected_display = self.ai_backend_var.get()
+            # === DETAILED DEBUG LOGGING ===
+            logger.info(f"=== GUI BACKEND CHANGE DEBUG START ===")
+            logger.info(f"Args received: {args}")
+            
+            # Try to get selection from args first (more reliable for events)
+            selected_display = None
+            if args and len(args) > 0:
+                selected_display = args[0]
+                logger.info(f"Selected display from args: '{selected_display}'")
+            else:
+                selected_display = self.ai_backend_var.get()
+                logger.info(f"Selected display from variable: '{selected_display}'")
+            logger.info(f"Available backend descriptions: {list(self.backend_descriptions.keys())}")
+            logger.info(f"Backend descriptions mapping: {self.backend_descriptions}")
+            
             if selected_display in self.backend_descriptions:
                 backend_id = self.backend_descriptions[selected_display]
+                logger.info(f"Mapped backend ID: '{backend_id}'")
+                logger.info(f"Current AI processor backend: '{self.ai_processor.selected_backend}'")
                 logger.info(f"User selected AI backend: {backend_id} ({selected_display})")
                 
+                # Update the variable to ensure consistency
+                if self.ai_backend_var.get() != selected_display:
+                    logger.info(f"Updating ai_backend_var from '{self.ai_backend_var.get()}' to '{selected_display}'")
+                    self.ai_backend_var.set(selected_display)
+                
                 # Change the backend in AI processor
+                logger.info(f"Attempting to switch backend from '{self.ai_processor.selected_backend}' to '{backend_id}'")
                 success = self.ai_processor.set_backend(backend_id)
+                logger.info(f"Backend switch success: {success}")
+                logger.info(f"AI processor backend after switch: '{self.ai_processor.selected_backend}'")
+                
                 if success:
                     logger.info(f"Successfully switched to backend: {backend_id}")
                     # Update any UI status if needed
@@ -1282,13 +1345,26 @@ class MainGUI:
                             logger.warning(f"Fallback system info update failed: {e}")
                 else:
                     logger.error(f"Failed to switch to backend: {backend_id}")
+                    logger.error(f"Available backends in AI processor: {list(self.ai_processor.available_backends.keys())}")
+                    
                     # Revert selection
+                    logger.info("Reverting backend selection due to failure")
                     for display_name, orig_backend_id in self.backend_descriptions.items():
                         if orig_backend_id == self.ai_processor.selected_backend:
+                            logger.info(f"Reverting to display: '{display_name}' (backend: '{orig_backend_id}')")
                             self.ai_backend_var.set(display_name)
                             break
+            else:
+                logger.error(f"Selected display '{selected_display}' not found in backend descriptions")
+                logger.error(f"Available options: {list(self.backend_descriptions.keys())}")
+            
+            logger.info(f"=== GUI BACKEND CHANGE DEBUG END ===")
+            
         except Exception as e:
-            logger.error(f"Error changing AI backend: {e}")
+            logger.error(f"Exception in _on_backend_change: {e}")
+            logger.error(f"Exception type: {type(e).__name__}")
+            import traceback
+            logger.error(f"Traceback: {traceback.format_exc()}")
         
     def _setup_system_section(self, parent):
         """Setup system information section"""
@@ -1798,6 +1874,49 @@ Additional GPUs: +{additional_count} more"""
             logger.info(f"Created new session: {self.current_session_id}")
         else:
             logger.info(f"Resuming session: {self.current_session_id}")
+            
+            # === RESUME FIX: セッション再開時の状態検証 ===
+            progress_data = self.session_manager.load_progress(self.current_session_id)
+            if not progress_data:
+                logger.warning(f"Resume session {self.current_session_id} has no progress data, recreating...")
+                # プログレスデータがない場合は新規セッションとして扱う
+                self.current_session_id = self.session_manager.create_session(
+                    input_path, settings, video_info['info']
+                )
+                logger.info(f"Recreated session: {self.current_session_id}")
+            else:
+                # セッション情報のログ出力を強化
+                completed_frames = progress_data.get('steps', {}).get('upscale', {}).get('completed_frames', [])
+                logger.info(f"Resume session verification:")
+                logger.info(f"  - Session ID: {self.current_session_id}")
+                logger.info(f"  - Completed frames in session: {len(completed_frames)}")
+                logger.info(f"  - Extract status: {progress_data.get('steps', {}).get('extract', {}).get('status', 'unknown')}")
+                logger.info(f"  - Upscale status: {progress_data.get('steps', {}).get('upscale', {}).get('status', 'unknown')}")
+                
+                # === RESUME FIX: 実際のファイルと完了フレーム情報を同期 ===
+                if len(completed_frames) == 0:
+                    logger.info("=== RESUME SYNC: No completed frames in session, checking filesystem ===")
+                    session_dir = self.session_manager.get_session_dir(self.current_session_id)
+                    upscaled_dir = session_dir / "upscaled"
+                    
+                    if upscaled_dir.exists():
+                        # アップスケール済みフレームファイルを検索
+                        upscaled_files = sorted([str(p) for p in upscaled_dir.glob("frame_*_upscaled.png")])
+                        if upscaled_files:
+                            logger.info(f"Found {len(upscaled_files)} upscaled frames in filesystem, syncing to session...")
+                            
+                            # セッションデータに実際のファイルを反映
+                            for frame_file in upscaled_files:
+                                self.session_manager.add_completed_frame(self.current_session_id, frame_file)
+                            
+                            # 更新後の状態を再ロード
+                            progress_data = self.session_manager.load_progress(self.current_session_id)
+                            completed_frames = progress_data.get('steps', {}).get('upscale', {}).get('completed_frames', [])
+                            logger.info(f"After sync: {len(completed_frames)} completed frames in session")
+                        else:
+                            logger.info("No upscaled frames found in filesystem")
+                    else:
+                        logger.info("No upscaled directory found")
         
         # Update session with output path
         progress_data = self.session_manager.load_progress(self.current_session_id)
@@ -1932,6 +2051,114 @@ Additional GPUs: +{additional_count} more"""
                         # Fallback to video processor frame_dir
                         frame_paths = sorted([str(p) for p in self.video_processor.frame_dir.glob("frame_*.png")])
                         logger.info(f"Found {len(frame_paths)} frames in video processor frame_dir (fallback)")
+                    
+                    # === EXTRACTION INTEGRITY CHECK ===
+                    logger.info(f"DEBUG: video_info structure: {video_info}")
+                    
+                    # 安全に動画情報を取得
+                    if isinstance(video_info, dict) and 'info' in video_info:
+                        expected_frames = video_info['info']['frame_count']
+                    else:
+                        logger.warning(f"video_info does not have expected 'info' structure: {video_info}")
+                        # フォールバック: 直接frame_countを探す
+                        if isinstance(video_info, dict) and 'frame_count' in video_info:
+                            expected_frames = video_info['frame_count']
+                        else:
+                            logger.error(f"Cannot determine frame count from video_info: {video_info}")
+                            expected_frames = len(frame_paths)  # 安全なフォールバック
+                    
+                    actual_frames = len(frame_paths)
+                    
+                    logger.info(f"=== EXTRACTION INTEGRITY CHECK ===")
+                    logger.info(f"Expected frames: {expected_frames}")
+                    logger.info(f"Actual frames: {actual_frames}")
+                    
+                    # フレーム数の差が大きい場合は警告ログを出力
+                    if actual_frames < expected_frames and (expected_frames - actual_frames) > 10:
+                        missing_frames = expected_frames - actual_frames
+                        completion_percentage = (actual_frames / expected_frames) * 100
+                        
+                        logger.warning(f"MAJOR FRAME COUNT MISMATCH DETECTED:")
+                        logger.warning(f"  Expected: {expected_frames} frames")
+                        logger.warning(f"  Actual: {actual_frames} frames")
+                        logger.warning(f"  Missing: {missing_frames} frames")
+                        logger.warning(f"  Completion: {completion_percentage:.1f}%")
+                        logger.warning(f"  This indicates incomplete frame extraction")
+                    
+                    # 継続抽出機能を有効化
+                    if actual_frames < expected_frames and (expected_frames - actual_frames) > 10:
+                        missing_frames = expected_frames - actual_frames
+                        completion_percentage = (actual_frames / expected_frames) * 100
+                        
+                        logger.warning(f"INCOMPLETE EXTRACTION DETECTED:")
+                        logger.warning(f"  Missing frames: {missing_frames}")
+                        logger.warning(f"  Extraction completion: {completion_percentage:.1f}%")
+                        logger.warning(f"  Extract status was 'completed' but only {actual_frames}/{expected_frames} frames exist")
+                        
+                        # セッションの抽出ステータスを修正
+                        progress_data = self.session_manager.load_progress(self.current_session_id)
+                        if progress_data:
+                            extract_step = progress_data['steps']['extract']
+                            extract_step['status'] = 'incomplete'
+                            extract_step['actual_frames'] = actual_frames
+                            extract_step['expected_frames'] = expected_frames
+                            extract_step['completion_percentage'] = completion_percentage
+                            self.session_manager.save_progress(self.current_session_id, progress_data)
+                            logger.info("Updated extract status to 'incomplete' in session data")
+                        
+                        # より簡単な解決策：フレーム抽出をやり直し
+                        logger.info(f"=== RESTARTING FRAME EXTRACTION ===")
+                        logger.info(f"Incomplete extraction detected - restarting full extraction")
+                        
+                        try:
+                            # セッションのフレーム抽出ステータスを未完了に変更
+                            progress_data = self.session_manager.load_progress(self.current_session_id)
+                            if progress_data:
+                                extract_step = progress_data['steps']['extract']
+                                extract_step['status'] = 'pending'
+                                extract_step['progress'] = 0
+                                extract_step['error'] = 'Incomplete extraction detected, restarting'
+                                self.session_manager.save_progress(self.current_session_id, progress_data)
+                                logger.info("Reset extraction status to pending")
+                            
+                            # 既存のフレームをクリーンアップしてフレーム抽出をやり直し
+                            import shutil
+                            if session_frames_dir.exists():
+                                logger.info(f"Cleaning up incomplete frames directory: {session_frames_dir}")
+                                shutil.rmtree(session_frames_dir)
+                                session_frames_dir.mkdir(parents=True, exist_ok=True)
+                            
+                            # フレーム抽出を再実行
+                            logger.info("Restarting complete frame extraction...")
+                            progress_callback(15, "不完全な抽出を検出 - フレーム抽出を再開中...")
+                            
+                            frame_paths = self.video_processor.extract_frames(
+                                input_path,
+                                str(session_frames_dir),
+                                lambda p, m: progress_callback(15 + p * 0.35, f"フレーム抽出: {m}")
+                            )
+                            
+                            if frame_paths:
+                                logger.info(f"Frame extraction restart successful: {len(frame_paths)} frames extracted")
+                                progress_callback(50, f"フレーム抽出完了: {len(frame_paths)}フレーム")
+                                
+                                # 抽出完了をセッションに記録
+                                if progress_data:
+                                    extract_step = progress_data['steps']['extract']
+                                    extract_step['status'] = 'completed'
+                                    extract_step['progress'] = 100
+                                    extract_step['extracted_frames'] = len(frame_paths)
+                                    extract_step['restarted'] = True
+                                    self.session_manager.save_progress(self.current_session_id, progress_data)
+                            else:
+                                raise RuntimeError("Frame extraction restart failed")
+                                
+                        except Exception as e:
+                            logger.error(f"Error in frame extraction restart: {e}")
+                            logger.info("Proceeding with existing frames despite restart error")
+                            # エラーが発生しても処理を継続
+                    else:
+                        logger.info(f"Extraction integrity: PASSED (all {expected_frames} frames present)")
                     
                     # === CRITICAL FIX: Check if frames actually exist ===
                     if len(frame_paths) == 0:
@@ -2095,6 +2322,13 @@ Additional GPUs: +{additional_count} more"""
                     logger.info(f"Total frames to process: {len(frame_paths)}")
                     logger.info(f"Completed frames: {len(completed_frames)}")
                     logger.info(f"Remaining frames: {len(remaining_frames)}")
+                    
+                    # Additional debug for path comparison
+                    if completed_frames:
+                        logger.info(f"Sample completed frame: {completed_frames[0]}")
+                    if frame_paths:
+                        logger.info(f"Sample frame path: {frame_paths[0]}")
+                    
                     self._safe_gui_update(lambda: progress_dialog.add_log_message(f"DEBUG: 完了済み {len(completed_frames)}フレーム、残り {len(remaining_frames)}フレーム"))
                     
                     if completed_frames:
@@ -2163,7 +2397,7 @@ Additional GPUs: +{additional_count} more"""
                     self._safe_gui_update(lambda: progress_dialog.update_step_progress("combine", step_progress))
                     progress_callback(85 + (progress * 0.15), message)  # 85-100% overall
                 
-                success = self.video_processor.combine_frames_to_video(
+                combine_result = self.video_processor.combine_frames_to_video(
                     upscaled_frames,
                     output_path,
                     input_path,
@@ -2171,9 +2405,111 @@ Additional GPUs: +{additional_count} more"""
                     combine_progress_callback
                 )
                 
+                # 戻り値がbool型（後方互換性）またはdict型（新しい形式）を処理
+                if isinstance(combine_result, bool):
+                    success = combine_result
+                    is_partial = False
+                else:
+                    success = combine_result.get('success', False)
+                    is_partial = combine_result.get('is_partial', False)
+                
                 if not success:
+                    error_msg = combine_result.get('error', 'Failed to combine frames to video') if isinstance(combine_result, dict) else 'Failed to combine frames to video'
                     self._safe_gui_update(lambda: progress_dialog.update_step_progress("combine", 0, "error"))
-                    raise RuntimeError("Failed to combine frames to video")
+                    raise RuntimeError(error_msg)
+                
+                # 部分処理の警告を表示
+                if is_partial:
+                    completion_percentage = combine_result.get('completion_percentage', 0)
+                    missing_frames = combine_result.get('missing_frames', 0)
+                    original_frames = combine_result.get('original_frames', 0)
+                    
+                    warning_msg = (
+                        f"⚠️ 部分処理が検出されました\n\n"
+                        f"処理完了率: {completion_percentage:.1f}%\n"
+                        f"処理済みフレーム: {combine_result.get('processed_frames', 0)}/{original_frames}\n"
+                        f"未処理フレーム: {missing_frames}\n\n"
+                        f"現在の状況:\n"
+                        f"• 部分的な動画が作成されました\n"
+                        f"• 作成された動画は元の動画よりも短くなります\n\n"
+                        f"残りのフレームを処理して完全な動画を作成しますか？"
+                    )
+                    
+                    def show_partial_warning():
+                        continue_processing = False
+                        
+                        if self.use_modern_gui:
+                            import customtkinter as ctk
+                            dialog = ctk.CTkToplevel(self.window)
+                            dialog.title("部分処理の確認")
+                            dialog.geometry("500x400")
+                            dialog.transient(self.window)
+                            dialog.grab_set()
+                            
+                            # センタリング
+                            dialog.update_idletasks()
+                            x = (dialog.winfo_screenwidth() // 2) - (dialog.winfo_reqwidth() // 2)
+                            y = (dialog.winfo_screenheight() // 2) - (dialog.winfo_reqheight() // 2)
+                            dialog.geometry(f"+{x}+{y}")
+                            
+                            main_frame = ctk.CTkFrame(dialog)
+                            main_frame.pack(fill="both", expand=True, padx=20, pady=20)
+                            
+                            text_widget = ctk.CTkTextbox(main_frame, wrap="word", height=250)
+                            text_widget.pack(fill="both", expand=True, pady=(0, 15))
+                            text_widget.insert("1.0", warning_msg)
+                            text_widget.configure(state="disabled")
+                            
+                            button_frame = ctk.CTkFrame(main_frame, fg_color="transparent")
+                            button_frame.pack(fill="x")
+                            
+                            def on_continue():
+                                nonlocal continue_processing
+                                continue_processing = True
+                                dialog.destroy()
+                            
+                            def on_cancel():
+                                dialog.destroy()
+                            
+                            continue_button = ctk.CTkButton(
+                                button_frame, 
+                                text="継続処理する", 
+                                command=on_continue,
+                                fg_color="#2B8B3D",  # Green color
+                                hover_color="#1F6B2B"
+                            )
+                            continue_button.pack(side="left", padx=(0, 10))
+                            
+                            cancel_button = ctk.CTkButton(
+                                button_frame, 
+                                text="現在の結果で完了", 
+                                command=on_cancel,
+                                fg_color="#D32F2F",  # Red color
+                                hover_color="#B71C1C"
+                            )
+                            cancel_button.pack(side="right")
+                            
+                            # ダイアログが閉じられるまで待機
+                            dialog.wait_window()
+                        else:
+                            import tkinter.messagebox as messagebox
+                            continue_processing = messagebox.askyesno(
+                                "部分処理の確認", 
+                                warning_msg + "\n\n継続処理しますか？",
+                                icon='warning'
+                            )
+                        
+                        # 継続処理が選択された場合
+                        if continue_processing:
+                            self._continue_partial_processing(
+                                session_id, 
+                                input_path, 
+                                output_path, 
+                                combine_result.get('processed_frames', 0),
+                                original_frames
+                            )
+                    
+                    self._safe_gui_update(show_partial_warning)
                 
                 # Completed
                 self._safe_gui_update(lambda: progress_dialog.update_step_progress("combine", 100, "complete"))
@@ -2194,7 +2530,17 @@ Additional GPUs: +{additional_count} more"""
                 self._safe_gui_update(lambda: self.root.after(1000, lambda: self._on_processing_error(error_msg, progress_dialog)))
                 
             except Exception as e:
+                import traceback
                 error_msg = str(e)
+                full_traceback = traceback.format_exc()
+                
+                # 詳細なエラーログを出力
+                logger.error(f"=== PROCESSING THREAD EXCEPTION ===")
+                logger.error(f"Error message: {error_msg}")
+                logger.error(f"Full traceback:")
+                logger.error(full_traceback)
+                logger.error(f"=== END PROCESSING THREAD EXCEPTION ===")
+                
                 if progress_dialog:
                     self._safe_gui_update(lambda: progress_dialog.add_log_message(f"Error: {error_msg}"))
                 self._safe_gui_update(lambda: self.root.after(1000, lambda: self._on_processing_error(error_msg, progress_dialog)))
@@ -2705,3 +3051,300 @@ Additional GPUs: +{additional_count} more"""
                     message=error_msg,
                     icon="cancel"
                 )
+    
+    def _continue_partial_processing(self, session_id, input_path, output_path, processed_frames, total_frames):
+        """部分処理の継続を実行する"""
+        logger.info(f"=== CONTINUING PARTIAL PROCESSING ===")
+        logger.info(f"Session ID: {session_id}")
+        logger.info(f"Already processed: {processed_frames}/{total_frames} frames")
+        logger.info(f"Remaining frames: {total_frames - processed_frames}")
+        
+        try:
+            # 新しい進捗ダイアログを作成
+            progress_dialog = None
+            if self.use_modern_gui:
+                progress_dialog = ProgressDialog(self.window, "継続処理中...")
+                progress_dialog.add_step("upscale", "残りフレームの処理")
+                progress_dialog.add_step("combine", "最終動画の作成")
+                progress_dialog.show()
+            
+            def continue_progress_callback(progress, message):
+                logger.info(f"Continue progress: {progress:.1f}% - {message}")
+                if progress_dialog:
+                    # 全体の進捗を更新
+                    progress_dialog.update_progress(progress, message)
+            
+            # 残りのフレームを処理
+            self._continue_upscaling_from_frame(
+                session_id, 
+                input_path, 
+                output_path,
+                processed_frames + 1,  # 次のフレームから開始
+                total_frames,
+                continue_progress_callback,
+                progress_dialog
+            )
+            
+            if progress_dialog:
+                progress_dialog.hide()
+            
+            # 成功メッセージ
+            success_msg = (
+                f"継続処理が完了しました！\n\n"
+                f"処理されたフレーム: {total_frames}/{total_frames}\n"
+                f"完全な動画が作成されました。"
+            )
+            
+            if self.use_modern_gui:
+                import customtkinter as ctk
+                CTkMessagebox(
+                    title="継続処理完了",
+                    message=success_msg,
+                    icon="check"
+                )
+            else:
+                import tkinter.messagebox as messagebox
+                messagebox.showinfo("継続処理完了", success_msg)
+                
+        except Exception as e:
+            logger.error(f"Continue processing failed: {e}")
+            if progress_dialog:
+                progress_dialog.hide()
+                
+            error_msg = f"継続処理中にエラーが発生しました:\n{str(e)}"
+            if self.use_modern_gui:
+                import customtkinter as ctk
+                CTkMessagebox(
+                    title="継続処理エラー",
+                    message=error_msg,
+                    icon="cancel"
+                )
+            else:
+                import tkinter.messagebox as messagebox
+                messagebox.showerror("継続処理エラー", error_msg)
+    
+    def _continue_upscaling_from_frame(self, session_id, input_path, output_path, start_frame, total_frames, progress_callback, progress_dialog):
+        """指定されたフレーム番号から処理を継続する"""
+        logger.info(f"=== CONTINUING UPSCALING FROM FRAME {start_frame} ===")
+        
+        # セッションの進捗データを取得
+        session_progress = self.session_manager.get_session_progress(session_id)
+        if not session_progress:
+            raise RuntimeError(f"Session {session_id} not found")
+        
+        # ビデオ情報を取得
+        video_info = self.video_processor.validate_video(input_path)
+        if not video_info['valid']:
+            raise RuntimeError("Invalid video file")
+        
+        # フレーム抽出がまだ完了していない場合は実行
+        extract_step = session_progress['steps'].get('extract', {})
+        if extract_step.get('status') != 'completed':
+            logger.info("Frame extraction not completed, running extraction first...")
+            self.video_processor.extract_frames(
+                input_path,
+                self.video_processor.temp_dir,
+                lambda p, m: progress_callback(p * 0.3, f"フレーム抽出: {m}")
+            )
+        
+        # 未処理のフレームを特定
+        frames_dir = Path(self.video_processor.temp_dir)
+        frame_files = sorted([f for f in frames_dir.glob("frame_*.png")])
+        
+        remaining_frames = frame_files[start_frame-1:]  # 0ベースのインデックス
+        logger.info(f"Processing {len(remaining_frames)} remaining frames")
+        
+        if progress_dialog:
+            progress_dialog.update_step_progress("upscale", 0, "準備中")
+        
+        # 残りのフレームを処理
+        for i, frame_file in enumerate(remaining_frames):
+            try:
+                # AI処理
+                result = self.ai_processor.upscale_image(str(frame_file))
+                if result:
+                    # セッションに追加
+                    self.session_manager.add_completed_frame(session_id, result)
+                    
+                    # 進捗更新
+                    current_frame = start_frame + i
+                    frame_progress = (current_frame / total_frames) * 100
+                    
+                    if progress_dialog:
+                        progress_dialog.update_step_progress("upscale", frame_progress)
+                    
+                    progress_callback(30 + (frame_progress * 0.55), f"フレーム処理: {current_frame}/{total_frames}")
+                    
+                    logger.info(f"Processed frame {current_frame}/{total_frames}")
+                else:
+                    logger.warning(f"Failed to process frame: {frame_file}")
+                    
+            except Exception as e:
+                logger.error(f"Error processing frame {frame_file}: {e}")
+                continue
+        
+        # アップスケール完了をセッションに記録
+        self.session_manager.update_step_status(session_id, "upscale", "completed")
+        
+        if progress_dialog:
+            progress_dialog.update_step_progress("upscale", 100, "完了")
+            progress_dialog.update_step_progress("combine", 0, "準備中")
+        
+        # 最終的な動画結合
+        logger.info("Creating final complete video...")
+        all_processed_frames = self.session_manager.get_completed_frames(session_id)
+        
+        def combine_progress_callback(progress, message):
+            if progress_dialog:
+                progress_dialog.update_step_progress("combine", progress)
+            progress_callback(85 + (progress * 0.15), f"動画結合: {message}")
+        
+        combine_result = self.video_processor.combine_frames_to_video(
+            all_processed_frames,
+            output_path,
+            input_path,
+            video_info['info']['frame_rate'],
+            combine_progress_callback
+        )
+        
+        if isinstance(combine_result, dict) and not combine_result.get('success'):
+            raise RuntimeError(combine_result.get('error', 'Failed to create final video'))
+        elif combine_result == False:
+            raise RuntimeError('Failed to create final video')
+        
+        # 結合完了をセッションに記録
+        self.session_manager.update_step_status(session_id, "combine", "completed")
+        
+        if progress_dialog:
+            progress_dialog.update_step_progress("combine", 100, "完了")
+        
+        progress_callback(100, "継続処理完了！")
+        
+        logger.info(f"Continue processing completed successfully for session {session_id}")
+    
+    def _prompt_continue_extraction(self, missing_frames, completion_percentage):
+        """未完了のフレーム抽出を継続するかユーザーに確認"""
+        message = (
+            f"⚠️ フレーム抽出が未完了です\n\n"
+            f"抽出完了率: {completion_percentage:.1f}%\n"
+            f"未抽出フレーム: {missing_frames}フレーム\n\n"
+            f"現在の状況:\n"
+            f"• フレーム抽出が途中で停止しました\n"
+            f"• このまま処理すると不完全な動画になります\n\n"
+            f"残りのフレームを抽出しますか？"
+        )
+        
+        try:
+            if self.use_modern_gui:
+                import customtkinter as ctk
+                dialog = ctk.CTkToplevel(self.window)
+                dialog.title("フレーム抽出の継続確認")
+                dialog.geometry("480x350")
+                dialog.transient(self.window)
+                dialog.grab_set()
+                
+                # センタリング
+                dialog.update_idletasks()
+                x = (dialog.winfo_screenwidth() // 2) - (dialog.winfo_reqwidth() // 2)
+                y = (dialog.winfo_screenheight() // 2) - (dialog.winfo_reqheight() // 2)
+                dialog.geometry(f"+{x}+{y}")
+                
+                main_frame = ctk.CTkFrame(dialog)
+                main_frame.pack(fill="both", expand=True, padx=20, pady=20)
+                
+                text_widget = ctk.CTkTextbox(main_frame, wrap="word", height=200)
+                text_widget.pack(fill="both", expand=True, pady=(0, 15))
+                text_widget.insert("1.0", message)
+                text_widget.configure(state="disabled")
+                
+                button_frame = ctk.CTkFrame(main_frame, fg_color="transparent")
+                button_frame.pack(fill="x")
+                
+                result = {"continue": False}
+                
+                def on_continue():
+                    result["continue"] = True
+                    dialog.destroy()
+                
+                def on_skip():
+                    dialog.destroy()
+                
+                continue_button = ctk.CTkButton(
+                    button_frame, 
+                    text="継続抽出する", 
+                    command=on_continue,
+                    fg_color="#2B8B3D",
+                    hover_color="#1F6B2B"
+                )
+                continue_button.pack(side="left", padx=(0, 10))
+                
+                skip_button = ctk.CTkButton(
+                    button_frame, 
+                    text="部分的な処理で続行", 
+                    command=on_skip,
+                    fg_color="#D32F2F",
+                    hover_color="#B71C1C"
+                )
+                skip_button.pack(side="right")
+                
+                dialog.wait_window()
+                return result["continue"]
+            else:
+                import tkinter.messagebox as messagebox
+                return messagebox.askyesno(
+                    "フレーム抽出の継続確認", 
+                    message + "\n\n継続抽出しますか？",
+                    icon='warning'
+                )
+        except Exception as e:
+            logger.error(f"Error showing extraction prompt: {e}")
+            return False
+    
+    def _continue_frame_extraction(self, input_path, output_dir, start_frame, total_frames, progress_callback):
+        """未完了のフレーム抽出を継続する"""
+        logger.info(f"=== CONTINUING FRAME EXTRACTION ===")
+        logger.info(f"Input: {input_path}")
+        logger.info(f"Output dir: {output_dir}")
+        logger.info(f"Start frame: {start_frame + 1}")
+        logger.info(f"Total frames: {total_frames}")
+        
+        try:
+            # 継続抽出用の進捗コールバック
+            def extract_progress_callback(progress, message):
+                # フレーム抽出の進捗を15-50%にマッピング
+                adjusted_progress = 15 + (progress * 0.35)
+                progress_callback(adjusted_progress, f"継続フレーム抽出: {message}")
+                
+            # FastFrameExtractorを使用して継続抽出
+            remaining_frames = total_frames - start_frame
+            logger.info(f"Extracting {remaining_frames} remaining frames starting from frame {start_frame + 1}")
+            
+            # 継続抽出を実行（範囲指定）
+            success = self.video_processor.fast_frame_extractor.extract_frames_range(
+                str(input_path),
+                str(output_dir),
+                start_frame + 1,  # 次のフレームから開始
+                total_frames,
+                extract_progress_callback
+            )
+            
+            if not success:
+                raise RuntimeError("Continue frame extraction failed")
+                
+            # セッションの抽出ステータスを更新
+            progress_data = self.session_manager.load_progress(self.current_session_id)
+            if progress_data:
+                extract_step = progress_data['steps']['extract']
+                extract_step['status'] = 'completed'
+                extract_step['actual_frames'] = total_frames
+                extract_step['completion_percentage'] = 100.0
+                extract_step['continued_extraction'] = True
+                self.session_manager.save_progress(self.current_session_id, progress_data)
+                
+            logger.info(f"Continue frame extraction completed successfully")
+            progress_callback(50, "フレーム抽出継続完了")
+            
+        except Exception as e:
+            logger.error(f"Continue frame extraction failed: {e}")
+            progress_callback(15, f"継続抽出エラー: {str(e)}")
+            raise

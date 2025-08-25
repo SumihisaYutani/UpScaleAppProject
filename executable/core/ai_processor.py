@@ -139,6 +139,11 @@ class AIProcessor:
     
     def get_available_backends(self) -> Dict[str, Dict[str, Any]]:
         """Get list of available backends for GUI selection"""
+        logger.info(f"=== AI PROCESSOR get_available_backends DEBUG ===")
+        logger.info(f"Current selected backend: {self.selected_backend}")
+        logger.info(f"Available backends: {list(self.available_backends.keys())}")
+        for backend_id, backend_info in self.available_backends.items():
+            logger.info(f"Backend '{backend_id}': name='{backend_info.get('name')}', gpu_support={backend_info.get('gpu_support')}, available={backend_info.get('available')}")
         return self.available_backends.copy()
     
     def set_backend(self, backend_name: str) -> bool:
@@ -588,21 +593,36 @@ class Waifu2xExecutableBackend:
                 '-v'  # Verbose output for debugging
             ]
             
-            # Debug waifu2x command for first few frames
+            # Debug waifu2x command - always log for troubleshooting
+            logger.info(f"=== WAIFU2X DEBUG START ===")
+            logger.info(f"Using {model_name} model at: {model_path}")
+            logger.info(f"Waifu2x command: {' '.join(cmd)}")
+            logger.info(f"GPU ID: {self.gpu_id}, Tile size: 400")
+            logger.info(f"Waifu2x executable exists: {Path(self.waifu2x_path).exists()}")
+            logger.info(f"Waifu2x executable path: {self.waifu2x_path}")
+            logger.info(f"Model directory exists: {model_path.exists()}")
+            logger.info(f"Model directory path: {model_path}")
+            
+            if model_path.exists():
+                model_files = list(model_path.glob("*.param"))[:3]
+                all_files = list(model_path.glob("*"))[:10]
+                logger.info(f"Model files found: {[f.name for f in model_files]}")
+                logger.info(f"All files in model dir: {[f.name for f in all_files]}")
+            else:
+                logger.error(f"Model directory does not exist: {model_path}")
+                # Try to find what directories exist
+                parent_dir = model_path.parent
+                if parent_dir.exists():
+                    available_dirs = [d.name for d in parent_dir.iterdir() if d.is_dir()]
+                    logger.info(f"Available directories in {parent_dir}: {available_dirs}")
+                    
+            logger.info(f"Input file exists: {Path(input_path).exists()}")
+            logger.info(f"Output directory exists: {Path(output_path).parent.exists()}")
+            
+            # Also send to progress dialog if available
             if progress_dialog:
                 progress_dialog.window.after(0, lambda: progress_dialog.add_log_message(f"DEBUG: Using {model_name} model at: {model_path}"))
-                progress_dialog.window.after(0, lambda: progress_dialog.add_log_message(f"DEBUG: Waifu2x command: {' '.join(cmd)}"))
-                progress_dialog.window.after(0, lambda: progress_dialog.add_log_message(f"DEBUG: GPU ID: {self.gpu_id}, Tile size: 400"))
-                progress_dialog.window.after(0, lambda: progress_dialog.add_log_message(f"DEBUG: Waifu2x executable exists: {Path(self.waifu2x_path).exists()}"))
                 progress_dialog.window.after(0, lambda: progress_dialog.add_log_message(f"DEBUG: Model directory exists: {model_path.exists()}"))
-                if model_path.exists():
-                    model_files = list(model_path.glob("*.param"))[:3]
-                    all_files = list(model_path.glob("*"))[:10]
-                    progress_dialog.window.after(0, lambda: progress_dialog.add_log_message(f"DEBUG: Model files found: {[f.name for f in model_files]}"))
-                    progress_dialog.window.after(0, lambda: progress_dialog.add_log_message(f"DEBUG: All files in model dir: {[f.name for f in all_files]}"))
-                    progress_dialog.window.after(0, lambda: progress_dialog.add_log_message(f"DEBUG: Model directory path: {model_path}"))
-                progress_dialog.window.after(0, lambda: progress_dialog.add_log_message(f"DEBUG: Input file exists: {Path(input_path).exists()}"))
-                progress_dialog.window.after(0, lambda: progress_dialog.add_log_message(f"DEBUG: Output directory exists: {Path(output_path).parent.exists()}"))
             
             # Hide console window on Windows
             startupinfo = None

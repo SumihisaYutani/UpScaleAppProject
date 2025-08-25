@@ -105,6 +105,10 @@ class UpScaleApp:
             self.session_manager = SessionManager()
             logger.info("SessionManager initialized")
             
+            # Clean up old and completed sessions at startup
+            logger.info("Cleaning up old and completed sessions...")
+            self.session_manager.cleanup_old_sessions(max_age_days=1)  # Clean sessions older than 1 day
+            
             # Initialize GUI
             self.gui = MainGUI(
                 video_processor=self.video_processor,

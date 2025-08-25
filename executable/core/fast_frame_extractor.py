@@ -239,7 +239,7 @@ class FastFrameExtractor:
                     '-t', f'{end_time - start_time:.3f}',  # 処理時間
                     # フレームレート維持（自動検出）
                     '-threads', thread_count,  # 動的スレッド数制限
-                    '-preset', 'fast',  # CPU負荷軽減
+                    # NOTE: presetオプションを削除 - フレーム抽出にはエンコード用presetは不要
                     '-y',  # 上書き許可
                     str(batch_dir / 'frame_%06d.png')
                 ]
@@ -261,7 +261,9 @@ class FastFrameExtractor:
                 )
                 
                 if result.returncode != 0:
-                    logger.error(f"Batch {batch_num + 1} failed: {result.stderr}")
+                    logger.error(f"Batch {batch_num + 1} failed with return code {result.returncode}: {result.stderr}")
+                    logger.warning(f"BATCH FAILURE RECOVERY: Batch {batch_num + 1} failed, but continuing with remaining batches")
+                    # このバッチをスキップして次のバッチに進む
                     return []
                 
                 # 抽出フレーム収集
@@ -351,7 +353,7 @@ class FastFrameExtractor:
             '-i', str(video_path),
             # フレームレート自動検出
             '-threads', str(min(4, multiprocessing.cpu_count())),  # 最大スレッド活用
-            '-preset', 'ultrafast',  # 最高速設定
+            # NOTE: presetオプションを削除 - フレーム抽出にはエンコード用presetは不要
             '-y',
             str(output_dir / 'frame_%06d.png')
         ]
@@ -370,7 +372,9 @@ class FastFrameExtractor:
         )
         
         if result.returncode != 0:
-            raise RuntimeError(f"Single-pass extraction failed: {result.stderr}")
+            logger.error(f"Single-pass extraction failed with return code {result.returncode}")
+            logger.error(f"FFmpeg stderr: {result.stderr}")
+            raise RuntimeError(f"Single-pass extraction failed: return code {result.returncode}")
         
         # フレーム収集
         frame_files = sorted(output_dir.glob("frame_*.png"))
@@ -465,3 +469,105 @@ class FastFrameExtractor:
         
         logger.info(f"CPU extraction estimated: {cpu_time/60:.1f} minutes ({cpu_time:.1f} seconds)")
         return cpu_time
+    
+    def extract_frames_range(self, video_path: str, output_dir: str, start_frame: int, end_frame: int, 
+                           progress_callback: Optional[Callable] = None) -> bool:
+        """指定された範囲のフレームを抽出する
+        
+        Args:
+            video_path: 入力動画パス
+            output_dir: 出力ディレクトリ
+            start_frame: 開始フレーム番号（1ベース）
+            end_frame: 終了フレーム番号（1ベース）
+            progress_callback: 進捗コールバック
+            
+        Returns:
+            bool: 抽出が成功したかどうか
+        """
+        logger.info(f"=== RANGE FRAME EXTRACTION START ===")
+        logger.info(f"Video: {video_path}")
+        logger.info(f"Output: {output_dir}")
+        logger.info(f"Frame range: {start_frame}-{end_frame}")
+        
+        try:
+            output_path = Path(output_dir)
+            output_path.mkdir(parents=True, exist_ok=True)
+            
+            ffmpeg_path = self.resource_manager.get_binary_path('ffmpeg')
+            if not ffmpeg_path:
+                raise RuntimeError("FFmpeg not found")
+            
+            total_frames_to_extract = end_frame - start_frame + 1
+            logger.info(f"Extracting {total_frames_to_extract} frames")
+            
+            if progress_callback:
+                progress_callback(0, f"開始準備中...")
+            
+            # FFmpegコマンドを構築（範囲指定）
+            cmd = [
+                ffmpeg_path,
+                '-i', video_path,
+                '-vf', f'select=gte(n\\,{start_frame-1})*lte(n\\,{end_frame-1})',  # 0ベースに変換
+                '-vsync', 'vfr',  # Variable frame rate
+                '-frame_pts', 'true',  # Preserve frame timing
+                os.path.join(output_dir, f'frame_%06d.png'),
+                '-y'  # Overwrite output files
+            ]
+            
+            logger.info(f"FFmpeg command: {' '.join(cmd)}")
+            
+            # Windows用のstartupinfo設定
+            startupinfo = None
+            if os.name == 'nt':
+                startupinfo = subprocess.STARTUPINFO()
+                startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+                startupinfo.wShowWindow = subprocess.SW_HIDE
+            
+            # プロセス実行
+            process = subprocess.Popen(
+                cmd, 
+                stdout=subprocess.PIPE, 
+                stderr=subprocess.PIPE,
+                text=True,
+                startupinfo=startupinfo
+            )
+            
+            # 進捗監視
+            extracted_count = 0
+            while process.poll() is None:
+                time.sleep(0.5)
+                
+                # 出力ディレクトリのファイル数をチェック
+                current_files = len(list(output_path.glob("frame_*.png")))
+                if current_files > extracted_count:
+                    extracted_count = current_files
+                    progress = min((extracted_count / total_frames_to_extract) * 100, 99)
+                    
+                    if progress_callback:
+                        progress_callback(progress, f"フレーム抽出中: {extracted_count}/{total_frames_to_extract}")
+                    
+                    logger.info(f"Range extraction progress: {extracted_count}/{total_frames_to_extract} ({progress:.1f}%)")
+            
+            # プロセス結果確認
+            stdout, stderr = process.communicate()
+            
+            if process.returncode == 0:
+                # 最終フレーム数確認
+                final_count = len(list(output_path.glob("frame_*.png")))
+                logger.info(f"Range extraction completed: {final_count} frames extracted")
+                
+                if progress_callback:
+                    progress_callback(100, f"抽出完了: {final_count}フレーム")
+                
+                return True
+            else:
+                logger.error(f"FFmpeg range extraction failed:")
+                logger.error(f"Return code: {process.returncode}")
+                logger.error(f"stderr: {stderr}")
+                return False
+                
+        except Exception as e:
+            logger.error(f"Range frame extraction failed: {e}")
+            if progress_callback:
+                progress_callback(0, f"抽出エラー: {str(e)}")
+            return False

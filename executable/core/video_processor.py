@@ -9,6 +9,7 @@ import subprocess
 import tempfile
 import logging
 import psutil
+import time
 from pathlib import Path
 from typing import Dict, List, Optional, Any, Callable
 from PIL import Image
@@ -304,18 +305,10 @@ class VideoProcessor:
             return 0
     
     def extract_frames(self, video_path: str, progress_callback: Optional[Callable] = None, progress_dialog=None) -> List[str]:
-        """Extract frames from video using optimized FastFrameExtractor"""
+        """Extract frames from video using simple single-pass FFmpeg command"""
         video_path = Path(video_path)
         
-        # Add debug messages to GUI log
-        if progress_dialog:
-            try:
-                progress_dialog.window.after(0, lambda: progress_dialog.add_log_message(f"INFO: Starting optimized frame extraction from: {video_path.name}"))
-                progress_dialog.window.after(0, lambda: progress_dialog.add_log_message(f"INFO: Using FastFrameExtractor for improved performance"))
-            except:
-                pass
-        
-        logger.info(f"Starting optimized frame extraction from: {video_path}")
+        logger.info(f"Starting simple frame extraction from: {video_path}")
         
         # Clear previous frames
         logger.info("Clearing previous frames...")
@@ -329,47 +322,63 @@ class VideoProcessor:
             frame_file.unlink()
         
         try:
-            # Get video info for processing decision
+            # Get video info
             video_info = self.validate_video(str(video_path))
             
             if not video_info['valid']:
-                if progress_dialog:
-                    progress_dialog.window.after(0, lambda: progress_dialog.add_log_message(f"ERROR: Video validation failed: {video_info['error']}"))
                 raise RuntimeError(f"Invalid video: {video_info['error']}")
             
             total_frames = video_info['info']['frame_count']
             duration = video_info['info']['duration']
-            frame_rate = video_info['info']['frame_rate']
             
-            if progress_dialog:
-                progress_dialog.window.after(0, lambda: progress_dialog.add_log_message(f"INFO: Video: {total_frames} frames, {duration:.1f}s, {frame_rate:.2f} fps"))
-                
-                # Show estimated time
-                estimated_time = self.fast_extractor.estimate_extraction_time(total_frames)
-                progress_dialog.window.after(0, lambda: progress_dialog.add_log_message(f"INFO: Estimated extraction time: {estimated_time/60:.1f} minutes"))
+            logger.info(f"Video analysis: {total_frames} frames, {duration:.1f}s duration")
             
-            logger.info(f"Video details - Total frames: {total_frames}, Duration: {duration}s, Frame rate: {frame_rate}")
+            if progress_callback:
+                progress_callback(10, "フレーム抽出を開始...")
             
-            # Use FastFrameExtractor for all videos
-            logger.info("Using FastFrameExtractor for optimized parallel processing")
-            frame_paths = self.fast_extractor.extract_frames_parallel(
-                video_path, total_frames, duration, progress_callback, progress_dialog
+            # Simple single FFmpeg command
+            ffmpeg_path = self.resource_manager.get_binary_path('ffmpeg')
+            cmd = [
+                ffmpeg_path,
+                '-i', str(video_path),
+                '-vsync', '0',  # 元のフレームレートを維持
+                '-q:v', '2',    # 高品質
+                str(self.frame_dir / "frame_%06d.png")
+            ]
+            
+            logger.info(f"Executing single-pass FFmpeg extraction: {' '.join(cmd)}")
+            
+            start_time = time.time()
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                creationflags=subprocess.CREATE_NO_WINDOW,
+                shell=False,
+                encoding='utf-8'
             )
             
-            logger.info(f"FastFrameExtractor completed: {len(frame_paths)} frames extracted")
+            if result.returncode != 0:
+                logger.error(f"FFmpeg extraction failed with return code {result.returncode}")
+                logger.error(f"FFmpeg stderr: {result.stderr}")
+                raise RuntimeError(f"Frame extraction failed: {result.stderr}")
+            
+            # Collect extracted frames
+            frame_files = sorted(self.frame_dir.glob("frame_*.png"))
+            frame_paths = [str(f) for f in frame_files]
+            
+            elapsed = time.time() - start_time
+            logger.info(f"Single-pass extraction completed in {elapsed:.1f}s: {len(frame_paths)} frames")
+            
+            if progress_callback:
+                progress_callback(100, f"抽出完了: {len(frame_paths)} フレーム")
+            
             return frame_paths
             
         except Exception as e:
-            logger.error(f"Optimized frame extraction failed: {e}")
-            if progress_dialog:
-                progress_dialog.window.after(0, lambda: progress_dialog.add_log_message(f"ERROR: Frame extraction failed: {str(e)}"))
-            
-            # Fallback to original method if FastFrameExtractor fails
-            logger.info("Falling back to original frame extraction method...")
-            if progress_dialog:
-                progress_dialog.window.after(0, lambda: progress_dialog.add_log_message("INFO: Falling back to original extraction method"))
-            
-            return self._extract_frames_fallback(video_path, progress_callback, progress_dialog)
+            error_msg = f"Frame extraction failed: {str(e)}"
+            logger.error(error_msg, exc_info=True)
+            raise RuntimeError(error_msg)
     
     def _extract_frames_fallback(self, video_path: Path, progress_callback: Optional[Callable] = None, progress_dialog=None) -> List[str]:
         """Fallback frame extraction using original single-pass method"""
@@ -662,7 +671,19 @@ class VideoProcessor:
                     logger.error(f"DEBUG: Batch {batch_num + 1} failed with return code {result.returncode}")
                     logger.error(f"DEBUG: FFmpeg stderr: {result.stderr}")
                     logger.error(f"DEBUG: FFmpeg stdout: {result.stdout}")
-                    raise RuntimeError(f"Frame extraction batch {batch_num + 1} failed: {result.stderr}")
+                    
+                    # 重要な修正: バッチ失敗時でも処理を継続
+                    logger.warning(f"BATCH FAILURE RECOVERY: Batch {batch_num + 1} failed, but continuing with remaining batches")
+                    logger.warning(f"This batch will be skipped, but other batches will still be processed")
+                    
+                    # バッチディレクトリをクリーンアップ
+                    if batch_dir.exists():
+                        import shutil
+                        shutil.rmtree(batch_dir, ignore_errors=True)
+                        logger.info(f"Cleaned up failed batch directory: {batch_dir}")
+                    
+                    # このバッチをスキップして次のバッチに進む
+                    continue
                 
                 # Collect frames from this batch
                 logger.info(f"DEBUG: Collecting frames from batch {batch_num + 1}")
@@ -819,8 +840,51 @@ class VideoProcessor:
                 accurate_fps = video_info['info']['frame_rate']
                 logger.info(f"DEBUG: Using accurate frame rate: {accurate_fps} fps (instead of default {fps})")
                 fps = accurate_fps
+                
+                # フレーム数の整合性チェック
+                original_frame_count = video_info['info']['frame_count']
+                processed_frame_count = len(existing_frames)
+                
+                logger.info(f"=== FRAME COUNT INTEGRITY CHECK ===")
+                logger.info(f"Original video frames: {original_frame_count}")
+                logger.info(f"Processed frames: {processed_frame_count}")
+                
+                # フレーム抽出の完全性も確認
+                extracted_frame_count = 0
+                session_frames_dir = Path(frame_paths[0]).parent.parent / "frames" if frame_paths else None
+                if session_frames_dir and session_frames_dir.exists():
+                    extracted_frames = list(session_frames_dir.glob("frame_*.png"))
+                    extracted_frame_count = len(extracted_frames)
+                    logger.info(f"Extracted frames: {extracted_frame_count}")
+                
+                if processed_frame_count < original_frame_count:
+                    missing_frames = original_frame_count - processed_frame_count
+                    completion_percentage = (processed_frame_count / original_frame_count) * 100
+                    logger.warning(f"PARTIAL PROCESSING DETECTED:")
+                    logger.warning(f"  Missing frames: {missing_frames}")
+                    logger.warning(f"  Completion rate: {completion_percentage:.1f}%")
+                    logger.warning(f"  This will create a shortened video ({processed_frame_count}/{original_frame_count} frames)")
+                    
+                    # フレーム抽出段階での問題かアップスケール段階での問題かを特定
+                    if extracted_frame_count < original_frame_count:
+                        extraction_percentage = (extracted_frame_count / original_frame_count) * 100
+                        logger.warning(f"ROOT CAUSE: Incomplete frame extraction")
+                        logger.warning(f"  Extracted: {extracted_frame_count}/{original_frame_count} ({extraction_percentage:.1f}%)")
+                        logger.warning(f"  Problem occurred during EXTRACTION phase")
+                    else:
+                        logger.warning(f"ROOT CAUSE: Incomplete upscaling")
+                        logger.warning(f"  All frames extracted, but only {processed_frame_count} upscaled")
+                        logger.warning(f"  Problem occurred during UPSCALING phase")
+                        
+                elif processed_frame_count > original_frame_count:
+                    logger.warning(f"UNEXPECTED: More processed frames ({processed_frame_count}) than original ({original_frame_count})")
+                else:
+                    logger.info(f"Frame count integrity: PASSED (all {original_frame_count} frames processed)")
+                    if extracted_frame_count > 0 and extracted_frame_count != original_frame_count:
+                        logger.warning(f"NOTE: Extraction count mismatch (extracted: {extracted_frame_count}, expected: {original_frame_count})")
             else:
                 logger.warning(f"DEBUG: Could not get accurate frame rate, using default: {fps} fps")
+                logger.warning(f"WARNING: Cannot perform frame count integrity check due to video validation failure")
             
             # Create temporary frame list
             with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as f:
@@ -867,19 +931,37 @@ class VideoProcessor:
                 
                 if result.returncode != 0:
                     logger.error(f"FFmpeg combine failed: {result.stderr}")
-                    return False
+                    return {'success': False, 'error': f"FFmpeg combine failed: {result.stderr}"}
                 
                 # Verify output file exists
                 if not Path(output_path).exists():
                     logger.error("Output video file was not created")
-                    return False
+                    return {'success': False, 'error': "Output video file was not created"}
                 
                 logger.info(f"Successfully created video: {output_path}")
                 
                 if progress_callback:
                     progress_callback(100, "Video reconstruction complete")
                 
-                return True
+                # 部分処理情報を含む結果を返す
+                result_info = {
+                    'success': True,
+                    'output_path': output_path,
+                    'processed_frames': len(existing_frames),
+                    'is_partial': False,
+                    'completion_percentage': 100.0
+                }
+                
+                # 部分処理の場合の情報を追加
+                if video_info['valid']:
+                    original_frame_count = video_info['info']['frame_count']
+                    if len(existing_frames) < original_frame_count:
+                        result_info['is_partial'] = True
+                        result_info['completion_percentage'] = (len(existing_frames) / original_frame_count) * 100
+                        result_info['original_frames'] = original_frame_count
+                        result_info['missing_frames'] = original_frame_count - len(existing_frames)
+                
+                return result_info
                 
             finally:
                 # Clean up temporary file
@@ -890,7 +972,7 @@ class VideoProcessor:
             
         except Exception as e:
             logger.error(f"Frame combination failed: {e}")
-            return False
+            return {'success': False, 'error': f"Frame combination failed: {e}"}
     
     def get_upscaled_resolution(self, width: int, height: int, scale_factor: float) -> tuple:
         """Calculate upscaled resolution"""
