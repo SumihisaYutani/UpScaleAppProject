@@ -86,13 +86,15 @@ class VideoProcessor:
             logger.info(f"DEBUG: Video path: '{video_path_str}' (length: {len(video_path_str)})")
             
             # Use shell=False and ensure proper encoding on Windows
+            # Add timeout to prevent hanging
             result = subprocess.run(
                 cmd, 
                 capture_output=True, 
                 text=True, 
                 startupinfo=startupinfo,
                 shell=False,
-                encoding='utf-8'
+                encoding='utf-8',
+                timeout=30  # 30秒タイムアウト
             )
             
             logger.info(f"DEBUG: FFprobe return code: {result.returncode}")
@@ -213,6 +215,13 @@ class VideoProcessor:
                 'info': info
             }
             
+        except subprocess.TimeoutExpired:
+            logger.error(f"Video validation timed out after 30 seconds for {video_path}")
+            return {
+                'valid': False,
+                'error': 'Video validation timed out - file may be corrupted or very large',
+                'info': None
+            }
         except Exception as e:
             logger.error(f"Video validation failed: {e}")
             return {

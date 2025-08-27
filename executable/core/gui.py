@@ -2809,13 +2809,11 @@ Additional GPUs: +{additional_count} more"""
                 
                 if choice == "resume":
                     self.current_session_id = resumable_session['session_id']
-                    self._add_status_message("前回のセッションから再開準備完了")
+                    self._add_status_message("前回のセッションから再開準備完了 - 「処理開始」ボタンを押してください")
                     logger.info(f"User chose to resume session {self.current_session_id}")
                     
-                    # === FIXED: 自動的に処理を開始 ===
-                    logger.info("Starting processing automatically after resume selection")
-                    # レジューム選択直後に処理を開始
-                    self._start_processing()
+                    # === FIXED: 自動処理開始を削除 - ユーザーが手動で開始する ===
+                    logger.info("Resume session prepared - waiting for user to click start button")
                 elif choice == "restart":
                     # Clean up old session
                     self.session_manager.cleanup_session(resumable_session['session_id'])
