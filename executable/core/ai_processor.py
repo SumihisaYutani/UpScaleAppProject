@@ -50,8 +50,8 @@ class AIProcessor:
         if preferred_backend and preferred_backend in self.available_backends:
             self.selected_backend = preferred_backend
         else:
-            # Priority order: Real-CUGAN first, then others
-            priority_order = ['real_cugan', 'waifu2x_executable', 'waifu2x_python', 'simple']
+            # Priority order: Real-CUGAN first, then Real-ESRGAN, then others
+            priority_order = ['real_cugan', 'real_esrgan', 'waifu2x_executable', 'waifu2x_python', 'simple']
             self.selected_backend = None
             for backend in priority_order:
                 if backend in self.available_backends:
@@ -90,6 +90,25 @@ class AIProcessor:
             logger.warning(f"Real-CUGAN backend module import failed: {e}")
         except Exception as e:
             logger.error(f"Real-CUGAN backend initialization error: {e}", exc_info=True)
+        
+        # Check Real-ESRGAN availability
+        try:
+            from .real_esrgan_backend import RealESRGANBackend
+            real_esrgan = RealESRGANBackend(self.resource_manager, self.gpu_info)
+            if real_esrgan.is_available():
+                backends['real_esrgan'] = {
+                    'name': 'Real-ESRGAN',
+                    'description': 'High-quality photographic image upscaling',
+                    'gpu_support': True,
+                    'recommended_for': 'Photos/General'
+                }
+                logger.info("Real-ESRGAN backend successfully added")
+            else:
+                logger.warning("Real-ESRGAN backend not available - backend check failed")
+        except ImportError as e:
+            logger.warning(f"Real-ESRGAN backend module import failed: {e}")
+        except Exception as e:
+            logger.error(f"Real-ESRGAN backend initialization error: {e}", exc_info=True)
         
         # Check Waifu2x Python library availability
         if WAIFU2X_NCNN_PY_AVAILABLE:
@@ -179,6 +198,12 @@ class AIProcessor:
                 from .real_cugan_backend import RealCUGANBackend
                 self.backend = RealCUGANBackend(self.resource_manager, self.gpu_info)
                 logger.info("Real-CUGAN backend object created")
+                
+            elif self.selected_backend == 'real_esrgan':
+                logger.info("Attempting Real-ESRGAN backend initialization...")
+                from .real_esrgan_backend import RealESRGANBackend
+                self.backend = RealESRGANBackend(self.resource_manager, self.gpu_info)
+                logger.info("Real-ESRGAN backend object created")
                 
             elif self.selected_backend == 'waifu2x_python':
                 logger.info("Attempting Waifu2x Python backend initialization...")

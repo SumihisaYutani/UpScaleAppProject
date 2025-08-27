@@ -36,6 +36,7 @@ class ResourceManager:
             'ffprobe': 'ffprobe.exe', 
             'waifu2x': 'waifu2x-ncnn-vulkan.exe',
             'realcugan-ncnn-vulkan': 'realcugan-ncnn-vulkan.exe',
+            'realesrgan-ncnn-vulkan': 'realesrgan-ncnn-vulkan.exe',
             'vulkaninfo': 'vulkaninfo.exe'
         }
         
@@ -165,6 +166,25 @@ class ResourceManager:
                 alt_resource_path = self.binaries_dir / alt_name
                 if alt_resource_path.exists():
                     logger.info(f"Found alternative resource Real-CUGAN binary: {alt_name} at {alt_resource_path}")
+                    return str(alt_resource_path)
+        
+        elif name == 'realesrgan-ncnn-vulkan':
+            for alt_name in ['realesrgan-ncnn-vulkan.exe', 'realesrgan.exe', 'real-esrgan-ncnn-vulkan.exe']:
+                if self.is_bundle:
+                    alt_path = self.bundle_dir / alt_name
+                    if alt_path.exists():
+                        logger.info(f"Found alternative bundled Real-ESRGAN binary: {alt_name} at {alt_path}")
+                        return str(alt_path)
+                    
+                    # Search recursively for alternative names
+                    for search_path in self.bundle_dir.rglob(alt_name):
+                        if search_path.is_file():
+                            logger.info(f"Found alternative bundled Real-ESRGAN binary recursively: {alt_name} at {search_path}")
+                            return str(search_path)
+                
+                alt_resource_path = self.binaries_dir / alt_name
+                if alt_resource_path.exists():
+                    logger.info(f"Found alternative resource Real-ESRGAN binary: {alt_name} at {alt_resource_path}")
                     return str(alt_resource_path)
         
         logger.warning(f"Binary not found: {name} (searched: bundle={self.is_bundle}, resource_dir={self.binaries_dir}, system paths)")
