@@ -130,6 +130,30 @@ class RealESRGANBackend:
             logger.warning(f"Unknown Real-ESRGAN model: {model_name}")
             return False
     
+    def _select_model_for_scale(self, scale_factor: float) -> str:
+        """Select the best model for the requested scale factor"""
+        # Find models that match the requested scale
+        matching_models = [name for name, info in self.models.items() if info['scale'] == scale_factor]
+        
+        if matching_models:
+            # Prefer general model, then anime models
+            if scale_factor == 2.0:
+                return 'anime_x2'  # Best 2x option
+            elif scale_factor == 3.0:
+                return 'anime_x3'  # Only 3x option
+            elif scale_factor == 4.0:
+                if 'general_x4' in matching_models:
+                    return 'general_x4'  # Best general 4x
+                else:
+                    return 'anime_x4'  # Fallback to anime 4x
+        
+        # No exact match, find closest scale
+        scales = [(name, info['scale']) for name, info in self.models.items()]
+        closest = min(scales, key=lambda x: abs(x[1] - scale_factor))
+        
+        logger.info(f"No exact scale match for {scale_factor}, using closest: {closest[0]} (scale {closest[1]})")
+        return closest[0]
+    
     def _monitor_gpu_status(self) -> Dict[str, Any]:
         """Monitor GPU status and detect issues"""
         vulkan_available = self.gpu_info.get('vulkan', {}).get('available', False)
@@ -179,15 +203,23 @@ class RealESRGANBackend:
             output_dir = Path(output_path).parent
             output_dir.mkdir(parents=True, exist_ok=True)
             
+            # Select best model for requested scale factor
+            best_model = self._select_model_for_scale(scale_factor)
+            if best_model != self.current_model:
+                logger.info(f"Auto-selecting model {best_model} for scale factor {scale_factor}")
+                self.set_model(best_model)
+            
             # Get model name and scale
             model_info = self.models[self.current_model]
             model_name = model_info['file']
             model_scale = model_info['scale']
             
-            # Adjust scale factor to match model capabilities
+            # Use the model's native scale
+            effective_scale = model_scale
             if scale_factor != model_scale:
-                logger.warning(f"Requested scale {scale_factor} doesn't match model scale {model_scale}, using model scale")
-                scale_factor = model_scale
+                logger.info(f"Using model {self.current_model} with native scale {model_scale} for requested scale {scale_factor}")
+            
+            scale_factor = effective_scale
             
             # Build Real-ESRGAN command (NCNN version uses different parameters)
             cmd = [
