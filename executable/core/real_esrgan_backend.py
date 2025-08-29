@@ -22,6 +22,7 @@ class RealESRGANBackend:
         self.resource_manager = resource_manager
         self.gpu_info = gpu_info
         self.available = False
+        self.thread_setting = '2:2:1'  # Default thread setting
         
         # Real-ESRGAN model configurations (using actual NCNN models)
         self.models = {
@@ -53,6 +54,12 @@ class RealESRGANBackend:
         
         self.default_model = 'general_x4'  # Best general purpose model
         self.current_model = self.default_model
+        
+        # Thread setting options
+        self.thread_options = {
+            '2:2:1': {'name': 'Standard (2:2:1)', 'description': 'Balanced performance'},
+            '4:2:2': {'name': 'Fast (4:2:2)', 'description': 'Higher I/O parallelism for SSD'}
+        }
         
         logger.info("Initializing Real-ESRGAN backend...")
         self._check_availability()
@@ -117,6 +124,8 @@ class RealESRGANBackend:
             'nvidia_gpu_count': len(self.gpu_info.get('nvidia', {}).get('gpus', [])),
             'models': list(self.models.keys()),
             'current_model': self.current_model,
+            'thread_options': self.thread_options,
+            'current_thread_setting': self.thread_setting,
             'available': self.available
         }
     
@@ -128,6 +137,27 @@ class RealESRGANBackend:
             return True
         else:
             logger.warning(f"Unknown Real-ESRGAN model: {model_name}")
+            return False
+    
+    def set_thread_setting(self, thread_setting: str) -> bool:
+        """Set the thread setting for Real-ESRGAN processing"""
+        logger.info(f"=== Real-ESRGAN SET_THREAD_SETTING DEBUG START ===")
+        logger.info(f"Requested thread setting: {thread_setting}")
+        logger.info(f"Available thread options: {self.thread_options}")
+        logger.info(f"Current thread setting: {self.thread_setting}")
+        
+        if thread_setting in self.thread_options:
+            old_setting = self.thread_setting
+            self.thread_setting = thread_setting
+            logger.info(f"SUCCESS: Real-ESRGAN thread setting changed from {old_setting} to: {thread_setting}")
+            logger.info(f"Thread setting details: {self.thread_options[thread_setting]}")
+            logger.info(f"New thread_setting value: {self.thread_setting}")
+            logger.info(f"=== Real-ESRGAN SET_THREAD_SETTING DEBUG END ===")
+            return True
+        else:
+            logger.error(f"ERROR: Unknown thread setting: {thread_setting}")
+            logger.error(f"Available options: {list(self.thread_options.keys())}")
+            logger.info(f"=== Real-ESRGAN SET_THREAD_SETTING DEBUG END ===")
             return False
     
     def _select_model_for_scale(self, scale_factor: float) -> str:
@@ -246,8 +276,7 @@ class RealESRGANBackend:
             
             # Add additional optimization flags
             cmd.extend([
-                '-j', '1:1:1',  # Load/Process/Save thread count
-                '-x',  # Use TTA mode for better quality
+                '-j', self.thread_setting,  # Load/Process/Save thread count (user configurable)
             ])
             
             logger.info(f"Real-ESRGAN command: {' '.join(cmd)}")

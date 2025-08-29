@@ -830,6 +830,7 @@ class MainGUI:
         self.scale_var = tk.StringVar(value="2.0x")
         self.quality_var = tk.StringVar(value="Balanced")
         self.ai_backend_var = tk.StringVar(value="real_cugan")  # Default to Real-CUGAN
+        self.thread_setting_var = tk.StringVar(value="2:2:1")  # Default thread setting
         
     def _create_window(self):
         """Create main window"""
@@ -1186,6 +1187,18 @@ class MainGUI:
             )
             self.ai_backend_menu.grid(row=1, column=1, columnspan=2, padx=10, pady=10, sticky="w")
             
+            # Thread setting (Real-ESRGAN only)
+            ctk.CTkLabel(settings_grid, text="Thread Setting:").grid(row=2, column=0, padx=10, pady=10, sticky="w")
+            self.thread_setting_menu = ctk.CTkComboBox(
+                settings_grid,
+                values=["2:2:1 (Standard)", "4:2:2 (Fast)"],
+                variable=self.thread_setting_var,
+                state="readonly",
+                width=150,
+                command=self._on_thread_setting_change
+            )
+            self.thread_setting_menu.grid(row=2, column=1, padx=10, pady=10, sticky="w")
+            
             # Set default backend display
             logger.info(f"Setting default backend display (CTK)...")
             default_set = False
@@ -1194,6 +1207,7 @@ class MainGUI:
                 if backend_id == 'real_cugan':
                     logger.info(f"Setting default backend to Real-CUGAN: '{display_name}'")
                     self.ai_backend_var.set(display_name)
+                    self._update_thread_setting_visibility(backend_id)
                     default_set = True
                     break
             if not default_set:
@@ -1203,6 +1217,7 @@ class MainGUI:
                     first_backend = self.backend_descriptions[first_display]
                     logger.info(f"Setting first available backend: '{first_backend}' (display: '{first_display}')")
                     self.ai_backend_var.set(first_display)
+                    self._update_thread_setting_visibility(first_backend)
         else:
             # Standard tkinter fallback
             settings_frame = ttk.LabelFrame(parent, text="Processing Settings", padding=15)
@@ -1274,6 +1289,7 @@ class MainGUI:
                 if backend_id == 'real_cugan':
                     logger.info(f"Setting default backend to Real-CUGAN: '{display_name}'")
                     self.ai_backend_var.set(display_name)
+                    self._update_thread_setting_visibility(backend_id)
                     default_set = True
                     break
             if not default_set:
@@ -1283,6 +1299,7 @@ class MainGUI:
                     first_backend = self.backend_descriptions[first_display]
                     logger.info(f"Setting first available backend: '{first_backend}' (display: '{first_display}')")
                     self.ai_backend_var.set(first_display)
+                    self._update_thread_setting_visibility(first_backend)
     
     def _on_backend_change(self, *args):
         """Handle AI backend selection change"""
@@ -1336,11 +1353,15 @@ class MainGUI:
                             self._update_system_info()
                         except Exception as e:
                             logger.warning(f"Immediate system info update failed: {e}")
+                        
+                        # Update thread setting visibility
+                        self._update_thread_setting_visibility(backend_id)
                     else:
                         logger.warning("Cannot schedule system info update - root not available")
                         # Try immediate update as fallback
                         try:
                             self._update_system_info()
+                            self._update_thread_setting_visibility(backend_id)
                         except Exception as e:
                             logger.warning(f"Fallback system info update failed: {e}")
                 else:
@@ -1366,6 +1387,77 @@ class MainGUI:
             import traceback
             logger.error(f"Traceback: {traceback.format_exc()}")
         
+    def _on_thread_setting_change(self, *args):
+        """Handle thread setting change for Real-ESRGAN"""
+        try:
+            logger.info(f"=== THREAD SETTING CHANGE DEBUG START ===")
+            logger.info(f"Args received: {args}")
+            
+            selected_display = args[0] if args else self.thread_setting_var.get()
+            logger.info(f"Thread setting changed to: {selected_display}")
+            logger.info(f"thread_setting_var.get(): {self.thread_setting_var.get()}")
+            
+            # Extract actual thread setting value
+            thread_setting = selected_display.split(' ')[0]  # Extract "2:2:1" from "2:2:1 (Standard)"
+            logger.info(f"Extracted thread setting: {thread_setting}")
+            
+            # Get current backend
+            current_backend_display = self.ai_backend_var.get()
+            logger.info(f"Current backend display: {current_backend_display}")
+            logger.info(f"Backend descriptions: {self.backend_descriptions}")
+            
+            if current_backend_display in self.backend_descriptions:
+                backend_id = self.backend_descriptions[current_backend_display]
+                logger.info(f"Backend ID: {backend_id}")
+                
+                # Apply to Real-ESRGAN and Real-CUGAN backends
+                if backend_id in ['real_esrgan', 'real_cugan']:
+                    logger.info(f"Backend is {backend_id}, attempting to set thread setting...")
+                    backend = self.ai_processor.available_backends.get(backend_id)
+                    logger.info(f"Backend object: {backend}")
+                    logger.info(f"Has set_thread_setting: {hasattr(backend, 'set_thread_setting') if backend else 'Backend is None'}")
+                    
+                    if backend and hasattr(backend, 'set_thread_setting'):
+                        logger.info(f"Calling set_thread_setting with: {thread_setting}")
+                        success = backend.set_thread_setting(thread_setting)
+                        logger.info(f"set_thread_setting result: {success}")
+                        if success:
+                            logger.info(f"SUCCESS: {backend_id} thread setting updated to: {thread_setting}")
+                            # Verify the setting was actually changed
+                            current_setting = getattr(backend, 'thread_setting', 'UNKNOWN')
+                            logger.info(f"Backend thread_setting after change: {current_setting}")
+                        else:
+                            logger.error(f"ERROR: Failed to set thread setting: {thread_setting}")
+                    else:
+                        logger.warning(f"ERROR: {backend_id} backend not found or doesn't support thread settings")
+                        logger.warning(f"Available backends: {list(self.ai_processor.available_backends.keys())}")
+                else:
+                    logger.info(f"Thread setting only applies to Real-ESRGAN and Real-CUGAN, current backend is: {backend_id}")
+            else:
+                logger.error(f"Backend display not found in descriptions: {current_backend_display}")
+            
+            logger.info(f"=== THREAD SETTING CHANGE DEBUG END ===")
+            
+        except Exception as e:
+            logger.error(f"Exception in _on_thread_setting_change: {e}")
+            import traceback
+            logger.error(f"Traceback: {traceback.format_exc()}")
+    
+    def _update_thread_setting_visibility(self, backend_id):
+        """Update thread setting control visibility based on selected backend"""
+        try:
+            if hasattr(self, 'thread_setting_menu'):
+                if backend_id in ['real_esrgan', 'real_cugan']:
+                    # Show thread setting for Real-ESRGAN and Real-CUGAN
+                    self.thread_setting_menu.grid()
+                    logger.info(f"Thread setting control shown for {backend_id}")
+                else:
+                    # Hide thread setting for other backends
+                    self.thread_setting_menu.grid_remove()
+                    logger.info(f"Thread setting control hidden for backend: {backend_id}")
+        except Exception as e:
+            logger.error(f"Exception in _update_thread_setting_visibility: {e}")
+    
     def _setup_system_section(self, parent):
         """Setup system information section"""
         if GUI_AVAILABLE and ctk:

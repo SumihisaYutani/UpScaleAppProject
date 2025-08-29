@@ -5,21 +5,37 @@ Environment-independent video upscaling tool
 Version: 2.0.0 (Executable Edition)
 """
 
+# CRITICAL: Hide console IMMEDIATELY before any other imports
 import sys
+if getattr(sys, 'frozen', False) and sys.platform == 'win32':
+    try:
+        import ctypes
+        # Method 1: Hide console window immediately
+        console = ctypes.windll.kernel32.GetConsoleWindow()
+        if console != 0:
+            ctypes.windll.user32.ShowWindow(console, 0)
+        
+        # Method 2: Detach from console entirely
+        try:
+            ctypes.windll.kernel32.FreeConsole()
+        except:
+            pass
+            
+        # Method 3: Disable console entirely via allocation
+        try:
+            ctypes.windll.kernel32.AllocConsole()
+            ctypes.windll.kernel32.FreeConsole()
+        except:
+            pass
+    except:
+        pass
+
 import os
 import atexit
 import signal
 from pathlib import Path
 import tkinter as tk
 from tkinter import messagebox
-
-# Hide console window on Windows for executable
-if getattr(sys, 'frozen', False) and sys.platform == 'win32':
-    try:
-        import ctypes
-        ctypes.windll.user32.ShowWindow(ctypes.windll.kernel32.GetConsoleWindow(), 0)
-    except:
-        pass
 
 # Detect if running as executable or script
 if getattr(sys, 'frozen', False):
@@ -85,17 +101,19 @@ def main():
     """Main application entry point"""
     global _app_instance
     
-    try:
-        print("UpScale App - Executable Edition v2.0.0")
-        print(f"Bundle Directory: {BUNDLE_DIR}")
-        print(f"Resource Directory: {RESOURCE_DIR}")
-        print(f"Running Mode: {'Executable' if IS_EXECUTABLE else 'Script'}")
-    except UnicodeEncodeError:
-        # Fallback for systems with encoding issues
-        print("UpScale App - Executable Edition v2.0.0")
-        print("Bundle Directory: " + str(BUNDLE_DIR))
-        print("Resource Directory: " + str(RESOURCE_DIR))
-        print("Running Mode: " + ('Executable' if IS_EXECUTABLE else 'Script'))
+    # Only print debug info when running as script (not executable)
+    if not IS_EXECUTABLE:
+        try:
+            print("UpScale App - Executable Edition v2.0.0")
+            print(f"Bundle Directory: {BUNDLE_DIR}")
+            print(f"Resource Directory: {RESOURCE_DIR}")
+            print(f"Running Mode: {'Executable' if IS_EXECUTABLE else 'Script'}")
+        except UnicodeEncodeError:
+            # Fallback for systems with encoding issues
+            print("UpScale App - Executable Edition v2.0.0")
+            print("Bundle Directory: " + str(BUNDLE_DIR))
+            print("Resource Directory: " + str(RESOURCE_DIR))
+            print("Running Mode: " + ('Executable' if IS_EXECUTABLE else 'Script'))
     
     # Setup cleanup handlers
     atexit.register(cleanup_on_exit)
@@ -129,15 +147,17 @@ def main():
         
     except ImportError as e:
         error_msg = f"Failed to import required modules:\n{e}\n\nThis may indicate a packaging issue."
-        print(f"❌ Import Error: {e}")
+        if not IS_EXECUTABLE:
+            print(f"❌ Import Error: {e}")
         show_startup_error(error_msg)
         return 1
     
     except Exception as e:
         error_msg = f"Unexpected error during startup:\n{e}"
-        print(f"💥 Startup Error: {e}")
-        import traceback
-        traceback.print_exc()
+        if not IS_EXECUTABLE:
+            print(f"💥 Startup Error: {e}")
+            import traceback
+            traceback.print_exc()
         show_startup_error(error_msg)
         return 1
     
