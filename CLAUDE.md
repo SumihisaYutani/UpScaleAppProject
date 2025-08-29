@@ -11,7 +11,7 @@
 ## ビルドコマンド
 ```bash
 cd executable
-python build_exe.py
+python build_gpu_version.py
 ```
 
 ## テストコマンド
@@ -21,8 +21,9 @@ python main.py
 ```
 
 ## 実行ファイル
-- **場所**: `executable/dist/UpScaleApp.exe`
+- **場所**: `executable/dist/UpScaleApp_GPU.exe`
 - **ビルドツール**: PyInstaller
+- **サイズ**: 703.53MB (最適化版)
 
 ## ログファイル場所
 - **パス**: `C:\Users\Yutani Sumihisa\UpScaleApp_Logs\`
@@ -36,3 +37,6 @@ python main.py
 ## 重要な修正履歴
 - 再開機能のフリーズ問題を修正 (gui.py:2810-2816)
 - ビデオ検証タイムアウト追加 (video_processor.py)
+- Real-CUGAN・Real-ESRGAN TTA無効化で50%高速化 (v2.3.0)
+- スレッド設定最適化とGUI選択機能追加 (real_cugan_backend.py, real_esrgan_backend.py)
+- ビルドプロセス最適化とキャッシュ機能追加 (build_gpu_version.py)
