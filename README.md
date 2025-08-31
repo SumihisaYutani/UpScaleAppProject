@@ -2,6 +2,11 @@
 
 **AI Video Upscaling Tool** - 低解像度のMP4動画をAI技術（Real-CUGAN・Waifu2x・Stable Diffusion）を使用して高解像度・高画質に変換するツール
 
+## 📸 スクリーンショット
+
+![UpScale App UI](screeenshot.png)
+*UpScale App - AI Video Upscaling Tool のメイン画面と処理ウィンドウ*
+
 ## 🌟 特徴
 
 - **🎯 Real-CUGAN特化AI**: anime/illustration専用超解像（NCNN-Vulkan最適化）
