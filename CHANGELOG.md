@@ -2,6 +2,27 @@
 
 All notable changes to UpScaleAppProject will be documented in this file.
 
+## [2.3.0] - 2025-10-26 - ビルド最適化・サイズ最新化
+
+### 📦 Build Optimization Updates
+
+#### Updated Build Specifications
+- **Executable Size**: Updated to 704.38 MB (from previous build)
+- **Build Time**: Optimized to 3.4 minutes (206.23 seconds)
+- **PyInstaller Cache**: Enhanced caching for faster subsequent builds
+- **Build Success**: Confirmed successful build completion with all GPU acceleration features
+
+#### Technical Improvements
+- **Module Exclusion**: Optimized exclusion of unnecessary modules (matplotlib, scipy, pandas)
+- **Dependency Collection**: Enhanced collection of waifu2x_ncnn_py and torch dependencies
+- **Hidden Imports**: Comprehensive hidden imports for all core modules
+- **Cache Management**: Improved PyInstaller cache management for build efficiency
+
+#### Documentation Updates
+- **README**: Updated file size references and build information
+- **BUILD_INFO**: Synchronized with current build specifications
+- **Technical Reference**: Version alignment with current implementation
+
 ## [2.2.0] - 2025-08-18 - GPU支援フレーム抽出実装
 
 ### ⚡ GPU Acceleration Features

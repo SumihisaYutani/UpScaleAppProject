@@ -151,7 +151,7 @@ python test_environment.py
 ### 🔥 **実行可能ファイル版（最推奨）**
 
 **特徴:**
-- Python環境不要（481MB単一実行ファイル - Real-CUGAN統合版）
+- Python環境不要（704.38MB単一実行ファイル - Real-CUGAN統合版）
 - 全ての依存関係を内蔵（FFmpeg, Real-CUGAN, Waifu2x-ncnn-py, PyTorch等）
 - AMD Radeon RX Vega 56 Vulkan GPU加速確認済み
 - Real-CUGAN NCNN-Vulkan GPU加速による高速AI処理
@@ -476,7 +476,7 @@ python test_environment.py
 - 🎯 **統一最適化アーキテクチャ** - Real-ESRGAN/Real-CUGAN両バックエンドで同等パフォーマンス実現
 - 📊 **実測パフォーマンス** - 774フレーム: ~8-10分→~4-5分、46,756フレーム: ~52時間→~26時間短縮
 - 🔧 **インテリジェントGUI** - バックエンド自動認識によるThread Setting表示制御
-- 📦 **高度ビルド最適化** - PyInstallerキャッシュ・不要モジュール除外で703.53MB最適化版
+- 📦 **高度ビルド最適化** - PyInstallerキャッシュ・不要モジュール除外で704.38MB最適化版
 - 🖥️ **シームレス実行体験** - コンソール完全非表示・即時起動・ユーザー体験向上
 - 🛠️ **包括的デバッグシステム** - スレッド設定追跡・パフォーマンス監視・詳細ログ
 
@@ -526,5 +526,5 @@ python test_environment.py
 
 **作成者**: SumihisaYutani  
 **バージョン**: 2.3.0 - Real-CUGAN・Real-ESRGAN最適化完全版  
-**最終更新**: 2025-08-30  
-**最新成果**: TTA無効化で50%高速化・スレッド最適化・統一アーキテクチャ・703.53MB最適化実行ファイル
+**最終更新**: 2025-10-26  
+**最新成果**: TTA無効化で50%高速化・スレッド最適化・統一アーキテクチャ・704.38MB最適化実行ファイル
